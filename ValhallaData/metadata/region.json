@@ -1,0 +1,21 @@
+{
+  "region": "marica-niteroi-sao-goncalo",
+  "municipalities": ["Maricá", "Niterói", "São Gonçalo"],
+  "bounding_box": {
+    "west": -43.3,
+    "south": -23.1,
+    "east": -42.7,
+    "north": -22.6
+  },
+  "center": [-42.98, -22.85],
+  "version": "0.1.0",
+  "updated_at": "2026-08-17",
+  "data_source": "OpenStreetMap (Geofabrik: rio-de-janeiro-latest.osm.pbf)",
+  "tiles_count": null,
+  "validation": {
+    "marica_streets": false,
+    "niteroi_streets": false,
+    "sao_goncalo_streets": false,
+    "intercity_connections": false
+  }
+}

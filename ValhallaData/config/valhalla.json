@@ -1,0 +1,16 @@
+{
+  "mjx": 4,
+  "mjx_tile_extract": false,
+  "tile_dir": "tiles",
+  "concurrency": 2,
+  "additional_data": {},
+  "service_limits": {
+    "max_locations_per_route": 50,
+    "max_matrix_distance_pairwise": 2500,
+    "max_matrix_locations": 50,
+    "max_exclude_locations": 50,
+    "max_radius": 50,
+    "max_sources_to_waypoints": 2500,
+    "max_waypoints": 50
+  }
+}
