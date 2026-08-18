@@ -5,6 +5,7 @@ import HomeScreen from '../screens/Home/HomeScreen';
 import ImportScreen from '../screens/Deliveries/ImportScreen';
 import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
 import MapScreen from '../screens/Map/MapScreen';
+import { colors } from '../theme';
 
 export type RootStackParamList = {
   Home: undefined;
@@ -21,15 +22,22 @@ export function Navigation() {
       <Stack.Navigator
         initialRouteName="Home"
         screenOptions={{
-          headerStyle: { backgroundColor: '#2563eb' },
-          headerTintColor: '#fff',
-          headerTitleStyle: { fontWeight: 'bold' },
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.primary,
+          headerTitleStyle: {
+            fontWeight: '700',
+            fontSize: 17,
+            color: colors.text,
+          },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: colors.background },
+          animation: 'slide_from_right',
         }}
       >
         <Stack.Screen
           name="Home"
           component={HomeScreen}
-          options={{ title: 'RotaSimples' }}
+          options={{ headerShown: false }}
         />
         <Stack.Screen
           name="Import"
@@ -39,12 +47,13 @@ export function Navigation() {
         <Stack.Screen
           name="Deliveries"
           component={DeliveriesScreen}
-          options={{ title: 'Lista de Entregas' }}
+          options={{ title: 'Entregas' }}
         />
+        {/* MapScreen fica 100% tela cheia de borda a borda */}
         <Stack.Screen
           name="Map"
           component={MapScreen}
-          options={{ title: 'Navegação e Rota' }}
+          options={{ headerShown: false }}
         />
       </Stack.Navigator>
     </NavigationContainer>

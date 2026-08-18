@@ -11,9 +11,17 @@ export interface ValidationResult {
 
 /**
  * Validates imported deliveries before routing starts.
- * - validates name, address, city, CEP
- * - validates latitude/longitude when present
- * - detects duplicates and empty rows
+ *
+ * Regras (em ordem de prioridade):
+ *   1. Linhas completamente vazias → emptyRows
+ *   2. Sem endereço E sem coordenadas → withoutAddress
+ *   3. Sem CEP → withoutCep (MAS ainda são salvas como "válidas" com geocodingStatus=pending)
+ *   4. Coordenadas presentes mas inválidas → withoutAddress
+ *   5. Duplicatas detectadas por normalização → duplicates
+ *   6. Demais → valid
+ *
+ * NOTA: Entregas sem CEP agora são aceitas e tentam geocodificação por endereço.
+ * Nenhuma entrega com endereço é descartada — sempre vai para o banco p/ resolução manual.
  */
 export class ValidationService {
   static validate(rows: Omit<DeliveryEntity, 'id'>[]): ValidationResult {
@@ -28,6 +36,7 @@ export class ValidationService {
     rows.forEach((row, index) => {
       const entity: DeliveryEntity = { ...row, id: index + 1 };
 
+      // 1. Linha completamente vazia
       const isEmpty =
         !entity.name &&
         !entity.address &&
@@ -41,31 +50,47 @@ export class ValidationService {
         return;
       }
 
-      if (!entity.address) {
+      // 2. Sem endereço E sem coordenadas (pode geocodificar apenas com CEP)
+      const hasAddress = !!entity.address;
+      const hasCep = !!entity.cep;
+      const hasCoords =
+        entity.latitude !== null && entity.longitude !== null &&
+        entity.latitude !== undefined && entity.longitude !== undefined;
+
+      if (!hasAddress && !hasCep && !hasCoords) {
         withoutAddress.push(entity);
         return;
       }
 
-      if (!entity.cep) {
-        withoutCep.push(entity);
-        return;
-      }
-
-      // Validate coordinates when present
-      if (entity.latitude !== null && entity.longitude !== null) {
-        const latValid = entity.latitude >= -90 && entity.latitude <= 90;
-        const lngValid = entity.longitude >= -180 && entity.longitude <= 180;
+      // 3. Valida coordenadas se presentes
+      if (hasCoords) {
+        const latValid = entity.latitude! >= -90 && entity.latitude! <= 90;
+        const lngValid = entity.longitude! >= -180 && entity.longitude! <= 180;
         if (!latValid || !lngValid) {
-          withoutAddress.push(entity); // treat invalid coords as needing geocoding
-          return;
+          entity.latitude = null;
+          entity.longitude = null;
+          entity.geocodingStatus = 'pending';
         }
       }
 
-      // Duplicate detection (by normalized address + city)
-      const key = `${entity.address.toLowerCase().trim()}|${entity.city?.toLowerCase().trim()}`;
+      // 4. Sem CEP: aceita mas registra
+      if (!hasCep && !hasCoords) {
+        withoutCep.push({ ...entity }); // registra no relatório
+        // MAS ainda adiciona ao valid para tentar geocodificar por endereço
+        valid.push(entity);
+        return;
+      }
+
+      // 5. Duplicata (por endereço + número + cidade normalizado)
+      const key = [
+        (entity.address ?? '').toLowerCase().trim().replace(/\s+/g, ' '),
+        (entity.number ?? '').trim(),
+        (entity.city ?? '').toLowerCase().trim(),
+      ].join('|');
+
       if (seen.has(key)) {
         duplicates.push(entity);
-        return;
+        return; // duplicatas são descartadas
       }
       seen.add(key);
 

@@ -181,8 +181,8 @@ export class ImportService {
         number: (normalized.number as string) || '',
         complement: (normalized.complement as string) || '',
         neighborhood: (normalized.neighborhood as string) || '',
-        city: (normalized.city as string) || 'Maricá',
-        state: (normalized.state as string) || 'RJ',
+        city: (normalized.city as string) || '',
+        state: (normalized.state as string) || '',
         cep: (normalized.cep as string) || '',
         phone: (normalized.phone as string) || '',
         orderCode: (normalized.orderCode as string) || '',
@@ -191,12 +191,18 @@ export class ImportService {
         snappedLatitude: null,
         snappedLongitude: null,
         geocodingStatus: hasCoords ? 'success' : 'pending',
+        geocodingSource: hasCoords ? 'spreadsheet' : null,
         routingStatus: 'pending',
         sequence: null,
         distance: null,
         duration: null,
         status: 'pending',
+        failReason: null,
+        notes: null,
+        deliveredAt: null,
+        createdAt: Date.now(),
       };
     });
   }
 }
+

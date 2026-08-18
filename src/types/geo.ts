@@ -44,7 +44,7 @@ export interface GpsPosition {
   timestamp: number;
 }
 
-/* ------------------------- Delivery entity (Phase 12) ------------------------- */
+/* ------------------------- Delivery entity ------------------------- */
 
 export type DeliveryStatus =
   | 'pending'
@@ -54,6 +54,14 @@ export type DeliveryStatus =
   | 'failed';
 
 export type GeocodingStatus = 'pending' | 'geocoding' | 'success' | 'failed';
+
+export type FailReason =
+  | 'absent'
+  | 'refused'
+  | 'wrong_address'
+  | 'no_access'
+  | 'other'
+  | null;
 
 export interface DeliveryEntity {
   id: number;
@@ -72,14 +80,19 @@ export interface DeliveryEntity {
   snappedLatitude: number | null;
   snappedLongitude: number | null;
   geocodingStatus: GeocodingStatus;
+  geocodingSource: string | null;   // 'brasilapi' | 'viacep' | 'nominatim' | 'photon' | 'manual' | 'spreadsheet'
   routingStatus: 'pending' | 'routed' | 'failed';
   sequence: number | null;
   distance: number | null;
   duration: number | null;
   status: DeliveryStatus;
+  failReason: FailReason;
+  notes: string | null;
+  deliveredAt: number | null;       // unix timestamp ms
+  createdAt: number | null;
 }
 
-/* ------------------------- Valhalla types (Phase 5/6/7) ------------------------- */
+/* ------------------------- Valhalla types ------------------------- */
 
 export type Costing = 'auto' | 'bicycle' | 'pedestrian' | 'bus' | 'truck';
 
@@ -128,9 +141,32 @@ export interface SnapOptions {
   bearingTolerance?: number;
 }
 
-/** GPS_SNAP_RADIUS / GPS_MIN_BEARING_CONFIDENCE (Phase 7 config) */
+/** GPS_SNAP_RADIUS / GPS_MIN_BEARING_CONFIDENCE config */
 export const SNAP_CONFIG = {
-  GPS_SNAP_RADIUS: 50, // meters — max distance to consider snapping
-  GPS_MIN_BEARING_CONFIDENCE: 0.5, // min heading reliability to use bearing
-  MIN_BEARING_SPEED: 1.5, // m/s — below this, vehicle is "stopped", bearing ignored
+  GPS_SNAP_RADIUS: 50,                // meters — max distance to consider snapping
+  GPS_MIN_BEARING_CONFIDENCE: 0.5,    // min heading reliability to use bearing
+  MIN_BEARING_SPEED: 1.5,             // m/s — below this, vehicle is "stopped", bearing ignored
 } as const;
+
+/* ------------------------- Geocoding types ------------------------- */
+
+export type GeocodingProvider =
+  | 'spreadsheet'
+  | 'brasilapi'
+  | 'viacep+nominatim'
+  | 'nominatim'
+  | 'photon'
+  | 'cache'
+  | 'manual';
+
+export interface GeocodeResult {
+  latitude: number;
+  longitude: number;
+  confidence: 'high' | 'medium' | 'low';
+  provider: GeocodingProvider;
+  formattedAddress?: string;
+}
+
+/* ------------------------- Navigation types ------------------------- */
+
+export type ExternalNavApp = 'waze' | 'google_maps' | 'apple_maps';

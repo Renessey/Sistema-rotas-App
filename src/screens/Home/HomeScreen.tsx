@@ -1,168 +1,554 @@
-import React, { useCallback, useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ScrollView } from 'react-native';
+/**
+ * HomeScreen — Dashboard principal do app RotaSimples.
+ *
+ * Componentes separados:
+ *   <AppHeader />       — Logo + badge
+ *   <GpsCard />         — Status do GPS em tempo real
+ *   <StatsGrid />       — Grid de métricas (total/entregues/pendentes/insucesso)
+ *   <ProgressCard />    — Barra de progresso da rota
+ *   <ConnectivityRow /> — Status da roteirização (online/offline)
+ *   <QuickActions />    — Botões de ação rápida
+ */
+
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  ScrollView,
+  Animated,
+  Dimensions,
+  type ViewStyle,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import { LocationService } from '../../services/gps/LocationService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { ValhallaService } from '../../services/routing/ValhallaService';
-import { colors, spacing, radius } from '../../theme';
+import { colors, spacing, radius, shadows, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
-export default function HomeScreen({ navigation }: Props) {
-  const [deliveryCount, setDeliveryCount] = useState(0);
-  const [locatedCount, setLocatedCount] = useState(0);
-  const [locationText, setLocationText] = useState('Verificando localização…');
-  const [offlineStatus, setOfflineStatus] = useState('');
+const { width: SCREEN_W } = Dimensions.get('window');
+const CARD_GAP = spacing.md;
 
-  const refreshCounts = useCallback(() => {
-    const deliveries = DatabaseService.getAllDeliveries();
-    setDeliveryCount(deliveries.length);
-    setLocatedCount(
-      deliveries.filter(
-        (d) => d.latitude !== null && d.longitude !== null,
-      ).length,
-    );
+/* ═══════════════════════════════════════════════════
+   SCREEN
+═══════════════════════════════════════════════════ */
+
+export default function HomeScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
+  const [stats, setStats] = useState({
+    total: 0, located: 0, completed: 0, pending: 0, failed: 0,
+  });
+  const [locationText, setLocationText] = useState('Verificando localização…');
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+  const [offlineOk, setOfflineOk] = useState(false);
+  const [routerOnline, setRouterOnline] = useState<boolean | null>(null);
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+
+  /* ── Data loaders ── */
+  const refreshStats = useCallback(() => {
+    setStats(DatabaseService.getStats());
   }, []);
 
   const checkLocation = useCallback(async () => {
     const permission = await LocationService.requestPermission();
     if (permission === 'denied' || permission === 'blocked') {
-      setLocationText('Permissão de localização negada');
+      setLocationText('Permissão negada — abra as configurações');
       return;
     }
     try {
       const pos = await LocationService.getCurrentPosition();
-      setLocationText(
-        `📍 ${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)} (±${Math.round(
-          pos.accuracy ?? 0,
-        )}m)`,
-      );
-    } catch (error) {
-      setLocationText('GPS indisponível — verifique se está ligado');
+      setGpsAccuracy(pos.accuracy);
+      setLocationText(`${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`);
+    } catch {
+      setLocationText('GPS indisponível — ligue o GPS');
     }
   }, []);
 
-  const checkOffline = useCallback(async () => {
-    const ready = await ValhallaService.tilesReady();
-    setOfflineStatus(
-      ready.installed
-        ? 'Valhalla offline: pronto'
-        : 'Valhalla offline: dados ainda não instalados',
-    );
+  const checkConnectivity = useCallback(async () => {
+    const tiles = await ValhallaService.tilesReady();
+    setOfflineOk(tiles.installed);
+    try {
+      const r = await fetch('https://valhalla1.openstreetmap.de', { signal: AbortSignal.timeout(3000) });
+      setRouterOnline(r.ok || r.status < 500);
+    } catch {
+      try {
+        const r2 = await fetch('https://router.project-osrm.org', { signal: AbortSignal.timeout(3000) });
+        setRouterOnline(r2.ok || r2.status < 500);
+      } catch {
+        setRouterOnline(false);
+      }
+    }
   }, []);
 
-  React.useEffect(() => {
-    refreshCounts();
+  useEffect(() => {
+    refreshStats();
     checkLocation();
-    checkOffline();
-  }, [refreshCounts, checkLocation, checkOffline]);
+    checkConnectivity();
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 440, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 440, useNativeDriver: true }),
+    ]).start();
+  }, [refreshStats, checkLocation, checkConnectivity, fadeAnim, slideAnim]);
+
+  const progress = stats.total > 0 ? stats.completed / stats.total : 0;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>ROTASIMPLES</Text>
-
-      <Pressable style={styles.locationCard} onPress={checkLocation}>
-        <Text style={styles.locationText}>{locationText}</Text>
-      </Pressable>
-
-      <Text style={styles.offlineText}>{offlineStatus}</Text>
-
-      <Pressable
-        style={styles.primaryButton}
-        onPress={() => navigation.navigate('Import')}
+    <ScrollView
+      style={screen.scroll}
+      contentContainerStyle={[
+        screen.content,
+        {
+          paddingTop: Math.max(insets.top, spacing.md),
+          paddingBottom: Math.max(insets.bottom, spacing.xl),
+        },
+      ]}
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
+      <Animated.View
+        style={[screen.inner, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
       >
-        <Text style={styles.primaryButtonText}>📄 IMPORTAR PLANILHA</Text>
-      </Pressable>
+        {/* ① Header */}
+        <AppHeader />
 
-      <View style={styles.statsRow}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{deliveryCount}</Text>
-          <Text style={styles.statLabel}>Entregas</Text>
-        </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{locatedCount}</Text>
-          <Text style={styles.statLabel}>Localizadas</Text>
-        </View>
-      </View>
+        {/* ② GPS */}
+        <GpsCard
+          locationText={locationText}
+          accuracy={gpsAccuracy}
+          onPress={checkLocation}
+        />
 
-      <Pressable
-        style={[styles.secondaryButton, deliveryCount === 0 && styles.disabled]}
-        disabled={deliveryCount === 0}
-        onPress={() => navigation.navigate('Deliveries')}
-      >
-        <Text style={styles.secondaryButtonText}>📋 VER LISTA</Text>
-      </Pressable>
+        {/* ③ Stats — só mostra com dados */}
+        {stats.total > 0 && <StatsGrid stats={stats} />}
 
-      <Pressable
-        style={[styles.primaryButton, deliveryCount === 0 && styles.disabled]}
-        disabled={deliveryCount === 0}
-        onPress={() => navigation.navigate('Map')}
-      >
-        <Text style={styles.primaryButtonText}>🗺️ VER NO MAPA</Text>
-      </Pressable>
+        {/* ④ Progresso — só mostra com dados */}
+        {stats.total > 0 && <ProgressCard completed={stats.completed} total={stats.total} progress={progress} />}
 
-      <Pressable
-        style={[styles.primaryButton, { backgroundColor: colors.success }, deliveryCount === 0 && styles.disabled]}
-        disabled={deliveryCount === 0}
-        onPress={() => navigation.navigate('Map')}
-      >
-        <Text style={styles.primaryButtonText}>⚡ OTIMIZAR ROTA</Text>
-      </Pressable>
+        {/* ⑤ Conectividade */}
+        <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
+
+        {/* ⑥ Ações */}
+        <QuickActions stats={stats} navigation={navigation} />
+      </Animated.View>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.xl, gap: spacing.lg },
-  title: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: colors.primary,
-    textAlign: 'center',
-    marginBottom: spacing.sm,
+/* ═══════════════════════════════════════════════════
+   ① APP HEADER
+═══════════════════════════════════════════════════ */
+
+function AppHeader() {
+  return (
+    <View style={header.root}>
+      <View style={header.textBlock}>
+        <Text style={header.title}>RotaSimples</Text>
+        <Text style={header.subtitle}>Gestão de Entregas Profissional</Text>
+      </View>
+      <View style={header.badge}>
+        <Text style={header.badgeIcon}>🚚</Text>
+      </View>
+    </View>
+  );
+}
+
+const header = StyleSheet.create({
+  root: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    paddingTop: spacing.sm,
   },
-  locationCard: {
+  textBlock: { flex: 1, gap: 3 },
+  title: { ...typography.displayMedium, color: colors.primary },
+  subtitle: { ...typography.caption, color: colors.textMuted },
+  badge: {
+    width: 52,
+    height: 52,
+    borderRadius: radius.lg,
+    backgroundColor: colors.primaryGhost,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  badgeIcon: { fontSize: 28 },
+});
+
+/* ═══════════════════════════════════════════════════
+   ② GPS CARD
+═══════════════════════════════════════════════════ */
+
+interface GpsCardProps {
+  locationText: string;
+  accuracy: number | null;
+  onPress: () => void;
+}
+
+function GpsCard({ locationText, accuracy, onPress }: GpsCardProps) {
+  const dotColor =
+    accuracy === null ? colors.textMuted
+    : accuracy < 15   ? colors.success
+    : accuracy < 50   ? colors.warning
+    : colors.danger;
+
+  return (
+    <Pressable
+      style={({ pressed }) => [gps.card, pressed && gps.cardPressed]}
+      onPress={onPress}
+    >
+      <View style={gps.left}>
+        <View style={[gps.dot, { backgroundColor: dotColor }]} />
+        <View style={gps.textBlock}>
+          <Text style={gps.label}>Localização GPS</Text>
+          <Text style={gps.value} numberOfLines={1}>{locationText}</Text>
+        </View>
+      </View>
+      {accuracy !== null && (
+        <View style={[gps.badge, { backgroundColor: dotColor + '22' }]}>
+          <Text style={[gps.badgeText, { color: dotColor }]}>±{Math.round(accuracy)}m</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+const gps = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.surface,
     borderRadius: radius.md,
-    padding: spacing.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
     borderWidth: 1,
     borderColor: colors.border,
+    ...shadows.sm,
   },
-  locationText: { fontSize: 15, color: colors.text },
-  offlineText: {
-    fontSize: 12,
-    color: colors.textMuted,
-    textAlign: 'center',
-  },
-  primaryButton: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-  },
-  primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  secondaryButton: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.primary,
-  },
-  secondaryButtonText: { color: colors.primary, fontSize: 16, fontWeight: '700' },
-  disabled: { opacity: 0.4 },
-  statsRow: { flexDirection: 'row', gap: spacing.md },
-  statCard: {
+  cardPressed: { opacity: 0.8 },
+  left: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1, minWidth: 0 },
+  dot: { width: 10, height: 10, borderRadius: 5, flexShrink: 0 },
+  textBlock: { flex: 1, minWidth: 0, gap: 2 },
+  label: { ...typography.caption, color: colors.textMuted },
+  value: { ...typography.bodySmall, color: colors.text, fontWeight: '500' },
+  badge: { borderRadius: radius.full, paddingHorizontal: spacing.sm, paddingVertical: 3, flexShrink: 0 },
+  badgeText: { ...typography.label, fontSize: 11 },
+});
+
+/* ═══════════════════════════════════════════════════
+   ③ STATS GRID
+═══════════════════════════════════════════════════ */
+
+interface StatsData {
+  total: number;
+  completed: number;
+  pending: number;
+  failed: number;
+  located: number;
+}
+
+function StatsGrid({ stats }: { stats: StatsData }) {
+  return (
+    <View style={statsGrid.root}>
+      <StatTile value={stats.total}     label="Total"     color={colors.primary}  icon="📦" />
+      <StatTile value={stats.completed} label="Entregues" color={colors.success}  icon="✅" />
+      <StatTile value={stats.pending}   label="Pendentes" color={colors.warning}  icon="⏳" />
+      <StatTile value={stats.failed}    label="Insucesso" color={colors.danger}   icon="❌" />
+    </View>
+  );
+}
+
+function StatTile({ value, label, color, icon }: {
+  value: number; label: string; color: string; icon: string;
+}) {
+  return (
+    <View style={[statsGrid.tile, { borderTopColor: color }]}>
+      <Text style={statsGrid.icon}>{icon}</Text>
+      <Text style={[statsGrid.value, { color }]}>{value}</Text>
+      <Text style={statsGrid.label} numberOfLines={1}>{label}</Text>
+    </View>
+  );
+}
+
+const statsGrid = StyleSheet.create({
+  root: { flexDirection: 'row', gap: CARD_GAP },
+  tile: {
     flex: 1,
     backgroundColor: colors.surface,
     borderRadius: radius.md,
-    padding: spacing.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
+    borderTopWidth: 3,
+    gap: 3,
+    ...shadows.sm,
   },
-  statValue: { fontSize: 26, fontWeight: '800', color: colors.primary },
-  statLabel: { fontSize: 13, color: colors.textMuted },
+  icon: { fontSize: 18 },
+  value: { ...typography.headline, fontSize: 22 },
+  label: { ...typography.caption, color: colors.textMuted, textAlign: 'center' },
+});
+
+/* ═══════════════════════════════════════════════════
+   ④ PROGRESS CARD
+═══════════════════════════════════════════════════ */
+
+interface ProgressCardProps {
+  completed: number;
+  total: number;
+  progress: number;
+}
+
+function ProgressCard({ completed, total, progress }: ProgressCardProps) {
+  return (
+    <View style={prog.card}>
+      <View style={prog.headerRow}>
+        <Text style={prog.label}>Progresso da Rota</Text>
+        <Text style={prog.pct}>{Math.round(progress * 100)}%</Text>
+      </View>
+      <View style={prog.track}>
+        <View style={[prog.fill, { width: `${progress * 100}%` as any }]} />
+      </View>
+      <Text style={prog.sub}>{completed} de {total} entregas concluídas</Text>
+    </View>
+  );
+}
+
+const prog = StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  label: { ...typography.bodySmall, color: colors.text, fontWeight: '600' },
+  pct: { ...typography.titleSmall, color: colors.primary },
+  track: { height: 8, backgroundColor: colors.border, borderRadius: radius.full, overflow: 'hidden' },
+  fill: { height: '100%', backgroundColor: colors.success, borderRadius: radius.full },
+  sub: { ...typography.caption, color: colors.textMuted },
+});
+
+/* ═══════════════════════════════════════════════════
+   ⑤ CONNECTIVITY ROW
+═══════════════════════════════════════════════════ */
+
+interface ConnectivityRowProps {
+  routerOnline: boolean | null;
+  offlineOk: boolean;
+}
+
+function ConnectivityRow({ routerOnline, offlineOk }: ConnectivityRowProps) {
+  const status =
+    routerOnline === null
+      ? { color: colors.textMuted, label: 'Verificando conectividade…', icon: '🔄' }
+      : routerOnline
+      ? { color: colors.success, label: 'Roteirização Online',           icon: '✅' }
+      : { color: colors.warning, label: 'Sem Internet — rotas aprox.',   icon: '⚠️' };
+
+  return (
+    <View style={[conn.row, { borderColor: status.color + '44' }]}>
+      <Text style={conn.icon}>{status.icon}</Text>
+      <Text style={[conn.text, { color: status.color }]} numberOfLines={1}>
+        {status.label}
+      </Text>
+      {offlineOk && (
+        <View style={conn.offlineBadge}>
+          <Text style={conn.offlineText}>Offline OK</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const conn = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    ...shadows.sm,
+  },
+  icon: { fontSize: 16, flexShrink: 0 },
+  text: { ...typography.bodySmall, fontWeight: '600', flex: 1 },
+  offlineBadge: {
+    backgroundColor: colors.success + '22',
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    flexShrink: 0,
+  },
+  offlineText: { ...typography.caption, color: colors.success, fontWeight: '700' },
+});
+
+/* ═══════════════════════════════════════════════════
+   ⑥ QUICK ACTIONS
+═══════════════════════════════════════════════════ */
+
+interface QuickActionsProps {
+  stats: StatsData;
+  navigation: Props['navigation'];
+}
+
+function QuickActions({ stats, navigation }: QuickActionsProps) {
+  return (
+    <View style={qa.root}>
+      <Text style={qa.sectionLabel}>AÇÕES RÁPIDAS</Text>
+
+      <ActionBtn
+        icon="📄"
+        label="Importar Planilha"
+        sublabel=".xlsx  ·  .csv  ·  .txt"
+        color={colors.primary}
+        onPress={() => navigation.navigate('Import')}
+      />
+
+      <View style={qa.row}>
+        <ActionBtn
+          icon="📋"
+          label="Ver Entregas"
+          sublabel={`${stats.total} registros`}
+          color={colors.textSecondary}
+          disabled={stats.total === 0}
+          flex
+          onPress={() => navigation.navigate('Deliveries')}
+        />
+        <ActionBtn
+          icon="🗺️"
+          label="Ver no Mapa"
+          sublabel="Visualizar rota"
+          color={colors.info}
+          disabled={stats.total === 0}
+          flex
+          onPress={() => navigation.navigate('Map')}
+        />
+      </View>
+
+      <ActionBtn
+        icon="⚡"
+        label="Iniciar Navegação"
+        sublabel={
+          stats.pending > 0
+            ? `${stats.pending} parada${stats.pending !== 1 ? 's' : ''} pendente${stats.pending !== 1 ? 's' : ''}`
+            : 'Nenhuma entrega pendente'
+        }
+        color={colors.success}
+        disabled={stats.pending === 0}
+        prominent
+        onPress={() => navigation.navigate('Map')}
+      />
+    </View>
+  );
+}
+
+interface ActionBtnProps {
+  icon: string;
+  label: string;
+  sublabel?: string;
+  color: string;
+  disabled?: boolean;
+  prominent?: boolean;
+  flex?: boolean;
+  onPress: () => void;
+}
+
+function ActionBtn({ icon, label, sublabel, color, disabled, prominent, flex, onPress }: ActionBtnProps) {
+  const containerStyle: ViewStyle[] = [
+    ab.btn,
+    prominent ? ab.btnProminent : {},
+    { backgroundColor: disabled ? colors.surfaceElevated : (prominent ? color : colors.surface) },
+    disabled ? ab.btnDisabled : {},
+    flex ? { flex: 1 } : {},
+    prominent && !disabled ? (shadows.colored(color) as ViewStyle) : {},
+  ];
+
+  const textColor = prominent ? '#fff' : (disabled ? colors.textMuted : colors.text);
+  const subColor  = prominent ? 'rgba(255,255,255,0.75)' : (disabled ? colors.textDisabled : colors.textMuted);
+
+  return (
+    <Pressable
+      style={({ pressed }) => [...containerStyle, !disabled && pressed ? ab.pressed : {}]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={[ab.icon, prominent && ab.iconLarge]}>{icon}</Text>
+      <View style={ab.textBlock}>
+        <Text style={[ab.label, { color: textColor }]} numberOfLines={1}>{label}</Text>
+        {sublabel ? (
+          <Text style={[ab.sublabel, { color: subColor }]} numberOfLines={1}>{sublabel}</Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+const ab = StyleSheet.create({
+  btn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.sm,
+  },
+  btnProminent: {
+    borderWidth: 0,
+    paddingVertical: spacing.lg,
+  },
+  btnDisabled: { opacity: 0.45 },
+  pressed: { opacity: 0.82, transform: [{ scale: 0.984 }] },
+  icon: { fontSize: 22, flexShrink: 0 },
+  iconLarge: { fontSize: 26 },
+  textBlock: { flex: 1, minWidth: 0, gap: 2 },
+  label: { ...typography.bodyMedium },
+  sublabel: { ...typography.caption },
+});
+
+const qa = StyleSheet.create({
+  root: { gap: CARD_GAP },
+  sectionLabel: {
+    ...typography.label,
+    color: colors.textMuted,
+    letterSpacing: 1.2,
+    marginBottom: -spacing.xs,
+  },
+  row: { flexDirection: 'row', gap: CARD_GAP },
+});
+
+/* ═══════════════════════════════════════════════════
+   SCREEN STYLES
+═══════════════════════════════════════════════════ */
+
+const screen = StyleSheet.create({
+  scroll: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  content: {
+    flexGrow: 1,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  inner: {
+    flex: 1,
+    gap: CARD_GAP,
+  },
 });

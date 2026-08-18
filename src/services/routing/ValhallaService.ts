@@ -9,6 +9,7 @@ import type {
   Costing,
 } from '../../types/geo';
 import { haversine, estimateDurationMeters, decodePolyline } from '../../utils/geo';
+import { OSRMService } from './OSRMService';
 
 interface ValhallaNative {
   isAvailable(): Promise<boolean>;
@@ -106,11 +107,19 @@ export class ValhallaService {
         const result = await ValhallaService.httpRoute(waypoints, options);
         if (result) return result;
       } catch (error) {
-        console.warn('[Valhalla] HTTP route failed, using fallback', error);
+        console.warn('[Valhalla] HTTP route failed, trying OSRM', error);
       }
     }
 
-    // 3) Straight-line fallback (no road data available)
+    // 3) OSRM fallback (public demo, real road network)
+    try {
+      const osrmResult = await OSRMService.route(waypoints);
+      if (osrmResult) return osrmResult;
+    } catch (error) {
+      console.warn('[Valhalla] OSRM route failed, using straight-line', error);
+    }
+
+    // 4) Straight-line fallback (no road data available)
     return ValhallaService.straightRoute(waypoints);
   }
 
@@ -141,11 +150,19 @@ export class ValhallaService {
         const result = await ValhallaService.httpMatrix(origins, destinations);
         if (result) return result;
       } catch (error) {
-        console.warn('[Valhalla] HTTP matrix failed, using fallback', error);
+        console.warn('[Valhalla] HTTP matrix failed, trying OSRM', error);
       }
     }
 
-    // 3) Haversine fallback
+    // 3) OSRM matrix fallback
+    try {
+      const osrmResult = await OSRMService.matrix(origins, destinations);
+      if (osrmResult) return osrmResult;
+    } catch (error) {
+      console.warn('[Valhalla] OSRM matrix failed, using haversine', error);
+    }
+
+    // 4) Haversine fallback
     const durations: number[][] = [];
     const distances: number[][] = [];
     for (const origin of origins) {
