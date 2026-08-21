@@ -150,19 +150,26 @@ export class ImportService {
         const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
 
         if (cleanKey.includes('nome') || cleanKey.includes('cliente')) normalized.name = stringVal;
-        else if (cleanKey.includes('endereco') || cleanKey.includes('rua') || cleanKey.includes('logradouro'))
+        else if (cleanKey.includes('endereco') || cleanKey.includes('rua') || cleanKey.includes('logradouro') || cleanKey.includes('destination adress') || cleanKey.includes('destination address'))
           normalized.address = stringVal;
         else if (cleanKey === 'numero' || cleanKey.includes('nº') || cleanKey.includes('num'))
           normalized.number = stringVal;
         else if (cleanKey.includes('complemento') || cleanKey === 'comp') normalized.complement = stringVal;
-        else if (cleanKey.includes('bairro')) normalized.neighborhood = stringVal;
-        else if (cleanKey.includes('cidade') || cleanKey.includes('municipio')) normalized.city = stringVal;
+        else if (cleanKey.includes('bairro') || cleanKey.includes('neighborhood')) normalized.neighborhood = stringVal;
+        else if (cleanKey.includes('cidade') || cleanKey.includes('municipio') || cleanKey.includes('city')) normalized.city = stringVal;
         else if (cleanKey.includes('estado') || cleanKey === 'uf') normalized.state = stringVal;
-        else if (cleanKey.includes('cep') || cleanKey.includes('codigo postal')) normalized.cep = stringVal;
+        else if (cleanKey.includes('cep') || cleanKey.includes('codigo postal') || cleanKey.includes('zipcode')) normalized.cep = stringVal;
         else if (cleanKey.includes('telefone') || cleanKey.includes('celular') || cleanKey === 'tel')
           normalized.phone = stringVal;
         else if (cleanKey.includes('pedido') || cleanKey.includes('codigo da entrega') || cleanKey.includes('order'))
           normalized.orderCode = stringVal;
+        else if (cleanKey.includes('sequence') || cleanKey.includes('sequencia')) {
+          const num = parseInt(stringVal, 10);
+          normalized.sequence = !isNaN(num) ? num : null;
+        }
+        else if (cleanKey.includes('corridor cage')) {
+          normalized.notes = stringVal ? `Corridor cage: ${stringVal}` : '';
+        }
         else if (cleanKey.includes('latitude') || cleanKey.includes('lat')) {
           const num = parseFloat(stringVal.replace(',', '.'));
           normalized.latitude = !isNaN(num) ? num : null;
@@ -193,12 +200,12 @@ export class ImportService {
         geocodingStatus: hasCoords ? 'success' : 'pending',
         geocodingSource: hasCoords ? 'spreadsheet' : null,
         routingStatus: 'pending',
-        sequence: null,
+        sequence: (normalized.sequence as number) ?? null,
         distance: null,
         duration: null,
         status: 'pending',
         failReason: null,
-        notes: null,
+        notes: (normalized.notes as string) || null,
         deliveredAt: null,
         createdAt: Date.now(),
       };

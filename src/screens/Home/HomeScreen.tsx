@@ -27,7 +27,8 @@ import type { RootStackParamList } from '../../navigation';
 import { LocationService } from '../../services/gps/LocationService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { ValhallaService } from '../../services/routing/ValhallaService';
-import { colors, spacing, radius, shadows, typography } from '../../theme';
+import { spacing, radius, shadows, typography } from '../../theme';
+import { useTheme } from '../../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
@@ -39,6 +40,8 @@ const CARD_GAP = spacing.md;
 ═══════════════════════════════════════════════════ */
 
 export default function HomeScreen({ navigation }: Props) {
+  const { colors } = useTheme();
+  const screen = React.useMemo(() => createScreenStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const [stats, setStats] = useState({
     total: 0, located: 0, completed: 0, pending: 0, failed: 0,
@@ -146,12 +149,17 @@ export default function HomeScreen({ navigation }: Props) {
 ═══════════════════════════════════════════════════ */
 
 function AppHeader() {
+  const { colors, theme, toggleTheme } = useTheme();
+  const header = React.useMemo(() => createHeaderStyles(colors), [colors]);
   return (
     <View style={header.root}>
       <View style={header.textBlock}>
         <Text style={header.title}>RotaSimples</Text>
         <Text style={header.subtitle}>Gestão de Entregas Profissional</Text>
       </View>
+      <Pressable onPress={toggleTheme} style={header.themeToggle}>
+        <Text style={header.themeIcon}>{theme === 'light' ? '🌙' : '☀️'}</Text>
+      </Pressable>
       <View style={header.badge}>
         <Text style={header.badgeIcon}>🚚</Text>
       </View>
@@ -159,7 +167,7 @@ function AppHeader() {
   );
 }
 
-const header = StyleSheet.create({
+const createHeaderStyles = (colors: any) => StyleSheet.create({
   root: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -170,6 +178,17 @@ const header = StyleSheet.create({
   textBlock: { flex: 1, gap: 3 },
   title: { ...typography.displayMedium, color: colors.primary },
   subtitle: { ...typography.caption, color: colors.textMuted },
+  themeToggle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceElevated,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  themeIcon: { fontSize: 20 },
   badge: {
     width: 52,
     height: 52,
@@ -193,6 +212,8 @@ interface GpsCardProps {
 }
 
 function GpsCard({ locationText, accuracy, onPress }: GpsCardProps) {
+  const { colors } = useTheme();
+  const gps = React.useMemo(() => createGpsStyles(colors), [colors]);
   const dotColor =
     accuracy === null ? colors.textMuted
     : accuracy < 15   ? colors.success
@@ -220,7 +241,7 @@ function GpsCard({ locationText, accuracy, onPress }: GpsCardProps) {
   );
 }
 
-const gps = StyleSheet.create({
+const createGpsStyles = (colors: any) => StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -256,6 +277,8 @@ interface StatsData {
 }
 
 function StatsGrid({ stats }: { stats: StatsData }) {
+  const { colors } = useTheme();
+  const statsGrid = React.useMemo(() => createStatsGridStyles(colors), [colors]);
   return (
     <View style={statsGrid.root}>
       <StatTile value={stats.total}     label="Total"     color={colors.primary}  icon="📦" />
@@ -266,9 +289,9 @@ function StatsGrid({ stats }: { stats: StatsData }) {
   );
 }
 
-function StatTile({ value, label, color, icon }: {
-  value: number; label: string; color: string; icon: string;
-}) {
+function StatTile({ value, label, color, icon }: { value: number; label: string; color: string; icon: string; }) {
+  const { colors } = useTheme();
+  const statsGrid = React.useMemo(() => createStatsGridStyles(colors), [colors]);
   return (
     <View style={[statsGrid.tile, { borderTopColor: color }]}>
       <Text style={statsGrid.icon}>{icon}</Text>
@@ -278,7 +301,7 @@ function StatTile({ value, label, color, icon }: {
   );
 }
 
-const statsGrid = StyleSheet.create({
+const createStatsGridStyles = (colors: any) => StyleSheet.create({
   root: { flexDirection: 'row', gap: CARD_GAP },
   tile: {
     flex: 1,
@@ -309,6 +332,8 @@ interface ProgressCardProps {
 }
 
 function ProgressCard({ completed, total, progress }: ProgressCardProps) {
+  const { colors } = useTheme();
+  const prog = React.useMemo(() => createProgStyles(colors), [colors]);
   return (
     <View style={prog.card}>
       <View style={prog.headerRow}>
@@ -323,7 +348,7 @@ function ProgressCard({ completed, total, progress }: ProgressCardProps) {
   );
 }
 
-const prog = StyleSheet.create({
+const createProgStyles = (colors: any) => StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
@@ -351,6 +376,8 @@ interface ConnectivityRowProps {
 }
 
 function ConnectivityRow({ routerOnline, offlineOk }: ConnectivityRowProps) {
+  const { colors } = useTheme();
+  const conn = React.useMemo(() => createConnStyles(colors), [colors]);
   const status =
     routerOnline === null
       ? { color: colors.textMuted, label: 'Verificando conectividade…', icon: '🔄' }
@@ -373,7 +400,7 @@ function ConnectivityRow({ routerOnline, offlineOk }: ConnectivityRowProps) {
   );
 }
 
-const conn = StyleSheet.create({
+const createConnStyles = (colors: any) => StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -406,6 +433,8 @@ interface QuickActionsProps {
 }
 
 function QuickActions({ stats, navigation }: QuickActionsProps) {
+  const { colors } = useTheme();
+  const qa = React.useMemo(() => createQaStyles(colors), [colors]);
   return (
     <View style={qa.root}>
       <Text style={qa.sectionLabel}>AÇÕES RÁPIDAS</Text>
@@ -468,6 +497,8 @@ interface ActionBtnProps {
 }
 
 function ActionBtn({ icon, label, sublabel, color, disabled, prominent, flex, onPress }: ActionBtnProps) {
+  const { colors } = useTheme();
+  const ab = React.useMemo(() => createAbStyles(colors), [colors]);
   const containerStyle: ViewStyle[] = [
     ab.btn,
     prominent ? ab.btnProminent : {},
@@ -497,7 +528,7 @@ function ActionBtn({ icon, label, sublabel, color, disabled, prominent, flex, on
   );
 }
 
-const ab = StyleSheet.create({
+const createAbStyles = (colors: any) => StyleSheet.create({
   btn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -521,7 +552,7 @@ const ab = StyleSheet.create({
   sublabel: { ...typography.caption },
 });
 
-const qa = StyleSheet.create({
+const createQaStyles = (colors: any) => StyleSheet.create({
   root: { gap: CARD_GAP },
   sectionLabel: {
     ...typography.label,
@@ -536,7 +567,7 @@ const qa = StyleSheet.create({
    SCREEN STYLES
 ═══════════════════════════════════════════════════ */
 
-const screen = StyleSheet.create({
+const createScreenStyles = (colors: any) => StyleSheet.create({
   scroll: {
     flex: 1,
     backgroundColor: colors.background,

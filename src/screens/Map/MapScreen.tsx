@@ -16,7 +16,7 @@ import {
   CameraRef,
   GeoJSONSource,
   Layer,
-  ViewAnnotation,
+  Marker,
 } from '@maplibre/maplibre-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -154,6 +154,31 @@ export default function MapScreen({ navigation }: Props) {
     setShowPanel(!!activeStop);
   }, [activeStop, panelAnim]);
 
+  /* ─── Rebuild Saved Route ─── */
+  useEffect(() => {
+    if (route || locatedDeliveries.length === 0 || !currentLocation || accuracy === null) return;
+
+    const hasSequence = locatedDeliveries.some((d) => d.sequence !== null);
+    if (hasSequence) {
+      const savedOrder = locatedDeliveries
+        .map((d, index) => ({ index, sequence: d.sequence }))
+        .filter(x => x.sequence !== null)
+        .sort((a, b) => a.sequence! - b.sequence!)
+        .map(x => x.index);
+
+      setOrder(savedOrder);
+
+      const stops = locatedDeliveries.map((d) => [d.longitude!, d.latitude!] as LngLat);
+      const waypoints = [currentLocation, ...savedOrder.map((i) => stops[i])];
+
+      ValhallaService.route(waypoints, { costing: 'auto' }).then(result => {
+        setRoute(result.geojson);
+        setRouteInfo({ distance: result.distance, duration: result.duration });
+        setRouteNetwork(result.fromRoadNetwork);
+      }).catch(e => console.warn('Saved route failed', e));
+    }
+  }, [locatedDeliveries, currentLocation, accuracy, route]);
+
   /* ─── Optimization + Route ─── */
   const optimizeRoute = useCallback(async () => {
     if (locatedDeliveries.length === 0) {
@@ -162,22 +187,36 @@ export default function MapScreen({ navigation }: Props) {
     }
     setOptimizing(true);
     try {
-      const stops = locatedDeliveries.map((d) => [d.longitude!, d.latitude!] as LngLat);
+      const pendingIndices: number[] = [];
+      const stops = locatedDeliveries.map((d, idx) => {
+        if (d.status !== 'completed') pendingIndices.push(idx);
+        return [d.longitude!, d.latitude!] as LngLat;
+      });
+
+      const optimizationStops = pendingIndices.map(i => stops[i]);
+
+      if (optimizationStops.length === 0) {
+        Alert.alert('Aviso', 'Todas as entregas já foram concluídas.');
+        setOptimizing(false);
+        return;
+      }
+
       const optimization = await RouteOptimizationService.optimize(
         currentLocation,
-        stops,
+        optimizationStops,
         { useDuration: false },
       );
 
-      setOrder(optimization.order);
+      const newOrder = optimization.order.map(i => pendingIndices[i]);
+      setOrder(newOrder);
 
       // Persist sequence to DB
-      optimization.order.forEach((stopIdx, sequence) => {
+      newOrder.forEach((stopIdx, sequence) => {
         DatabaseService.updateDeliverySequence(locatedDeliveries[stopIdx].id, sequence);
       });
 
       // Route geometry
-      const waypoints = [currentLocation, ...optimization.order.map((i) => stops[i])];
+      const waypoints = [currentLocation, ...newOrder.map((i) => stops[i])];
       const result = await ValhallaService.route(waypoints, { costing: 'auto' });
       setRoute(result.geojson);
       setRouteInfo({ distance: result.distance, duration: result.duration });
@@ -303,12 +342,23 @@ export default function MapScreen({ navigation }: Props) {
       if (d) sequenceMap.set(d.id, i);
     });
 
-    return locatedDeliveries.map((d) => {
-      const isActive = activeStop?.id === d.id;
-      const isNext = nextStop?.id === d.id;
-      const isDone = completedIds.has(d.id) || d.status === 'completed';
-      const seq = sequenceMap.get(d.id);
-      const coords: LngLat = [d.longitude!, d.latitude!];
+    const grouped = new Map<string, { deliveries: DeliveryEntity[] }>();
+    locatedDeliveries.forEach((d) => {
+      const key = `${d.longitude!.toFixed(6)},${d.latitude!.toFixed(6)}`;
+      if (!grouped.has(key)) grouped.set(key, { deliveries: [] });
+      grouped.get(key)!.deliveries.push(d);
+    });
+
+    return Array.from(grouped.entries()).map(([key, group]) => {
+      const ds = group.deliveries;
+      const primaryD = ds[0];
+      const seq = sequenceMap.get(primaryD.id);
+
+      const isActive = activeStop && ds.some(d => d.id === activeStop.id);
+      const isNext = nextStop && ds.some(d => d.id === nextStop.id);
+      const isDone = ds.every(d => completedIds.has(d.id) || d.status === 'completed');
+
+      const coords: LngLat = [primaryD.longitude!, primaryD.latitude!];
 
       const markerColor = isDone
         ? colors.success
@@ -318,29 +368,39 @@ export default function MapScreen({ navigation }: Props) {
             ? colors.warning
             : colors.danger;
 
+      const zIndex = isNext || isActive ? 999 : 1;
+
       return (
-        <ViewAnnotation
-          key={d.id}
-          id={`delivery-${d.id}`}
+        <Marker
+          key={key}
+          id={`group-${key}`}
           lngLat={coords}
           anchor="center"
-          draggable={manualCorrection && isActive}
-          onDragEnd={(e) => handleManualDrag(d, e.nativeEvent.lngLat)}
-          onPress={() => selectStop(d)}
+          onPress={() => selectStop(primaryD)}
         >
-          <View style={[
-            markerStyles.pin,
-            { backgroundColor: markerColor },
-            isNext && markerStyles.pinNext,
-            isActive && markerStyles.pinActive,
-          ]}>
-            <Text style={markerStyles.pinText}>{seq !== undefined ? seq + 1 : '?'}</Text>
+          <Pressable
+            onPress={() => selectStop(primaryD)}
+            style={[
+              markerStyles.pin,
+              { backgroundColor: markerColor, zIndex },
+              isNext && markerStyles.pinNext,
+              isActive && markerStyles.pinActive,
+            ]}
+          >
+            <Text style={markerStyles.pinText}>
+              {seq !== undefined ? seq + 1 : '?'}
+            </Text>
+            {ds.length > 1 && (
+              <View style={markerStyles.badgeCount}>
+                <Text style={markerStyles.badgeCountText}>{ds.length}</Text>
+              </View>
+            )}
             {isNext && <View style={markerStyles.pinPulse} />}
-          </View>
-        </ViewAnnotation>
+          </Pressable>
+        </Marker>
       );
     });
-  }, [locatedDeliveries, order, activeStop, nextStop, completedIds, manualCorrection, handleManualDrag, selectStop]);
+  }, [locatedDeliveries, order, activeStop, nextStop, completedIds, selectStop]);
 
   /* ─── Helpers ─── */
   const formatDistance = (m: number) =>
@@ -423,66 +483,89 @@ export default function MapScreen({ navigation }: Props) {
         )}
 
         {/* User location */}
-        <ViewAnnotation id="user-location" lngLat={currentLocation} anchor="center">
+        <Marker id="user-location" lngLat={currentLocation} anchor="center">
           <View style={styles.userMarkerRing}>
             <View style={styles.userMarkerOuter}>
               <View style={styles.userMarkerInner} />
             </View>
           </View>
-        </ViewAnnotation>
+        </Marker>
 
         {/* Delivery markers */}
         {deliveryMarkers}
       </MapLibreMap>
 
-      {/* ── HUD Top Bar ── */}
-      <View style={[styles.hudTop, { top: insets.top + spacing.sm }]}>
-        {/* Speed */}
-        <View style={styles.hudCard}>
-          <Text style={styles.hudBig}>{speedKmh ?? '—'}</Text>
-          <Text style={styles.hudSub}>km/h</Text>
+      {/* ── Top Header Bar (Voltar + HUD) ── */}
+      <View
+        style={[
+          styles.topContainer,
+          { top: Math.max(insets.top, spacing.xs) + spacing.xs },
+        ]}
+        pointerEvents="box-none"
+      >
+        {/* Linha superior: Botão Voltar */}
+        <View style={styles.topNavRow} pointerEvents="box-none">
+          <Pressable
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && styles.backButtonPressed,
+            ]}
+            onPress={() => navigation.goBack()}
+            hitSlop={8}
+          >
+            <Text style={styles.backButtonIcon}>←</Text>
+          </Pressable>
         </View>
 
-        {/* Optimize / Route info */}
-        <View style={styles.hudCenter}>
-          {routeInfo ? (
-            <Pressable style={styles.routeInfoCard} onPress={fitRoute}>
-              <Text style={styles.routeInfoPrimary}>
-                {formatDistance(routeInfo.distance)} · {formatDuration(routeInfo.duration)}
-              </Text>
-              <Text style={styles.routeInfoSub}>
-                {remainingStops} parada{remainingStops !== 1 ? 's' : ''} restante{remainingStops !== 1 ? 's' : ''}
-                {!routeNetwork ? ' · aprox.' : ''}
-              </Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              style={[styles.optimizeBtn, optimizing && { opacity: 0.7 }]}
-              onPress={optimizeRoute}
-              disabled={optimizing}
-            >
-              {optimizing ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.optimizeBtnText}>⚡ Otimizar Rota</Text>
-              )}
-            </Pressable>
-          )}
+        {/* Linha inferior: Controles HUD (km/h, Otimizar/Rota, GPS) */}
+        <View style={styles.hudTop} pointerEvents="box-none">
+          {/* Speed */}
+          <View style={styles.hudCard}>
+            <Text style={styles.hudBig}>{speedKmh ?? '—'}</Text>
+            <Text style={styles.hudSub}>km/h</Text>
+          </View>
+
+          {/* Optimize / Route info */}
+          <View style={styles.hudCenter}>
+            {routeInfo ? (
+              <Pressable style={styles.routeInfoCard} onPress={fitRoute}>
+                <Text style={styles.routeInfoPrimary} numberOfLines={1} adjustsFontSizeToFit>
+                  {formatDistance(routeInfo.distance)} · {formatDuration(routeInfo.duration)}
+                </Text>
+                <Text style={styles.routeInfoSub} numberOfLines={1}>
+                  {remainingStops} parada{remainingStops !== 1 ? 's' : ''} restante{remainingStops !== 1 ? 's' : ''}
+                  {!routeNetwork ? ' · aprox.' : ''}
+                </Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.optimizeBtn, optimizing && { opacity: 0.7 }]}
+                onPress={optimizeRoute}
+                disabled={optimizing}
+              >
+                {optimizing ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.optimizeBtnText} numberOfLines={1}>⚡ Otimizar Rota</Text>
+                )}
+              </Pressable>
+            )}
+          </View>
+
+          {/* Accuracy */}
+          <View style={styles.hudCard}>
+            <Text style={styles.hudBig}>{accuracy !== null ? Math.round(accuracy) : '—'}</Text>
+            <Text style={styles.hudSub}>GPS±m</Text>
+          </View>
         </View>
 
-        {/* Accuracy */}
-        <View style={styles.hudCard}>
-          <Text style={styles.hudBig}>{accuracy !== null ? Math.round(accuracy) : '—'}</Text>
-          <Text style={styles.hudSub}>GPS±m</Text>
-        </View>
+        {/* GPS Error */}
+        {gpsError && (
+          <View style={styles.gpsError}>
+            <Text style={styles.gpsErrorText}>⚠️ {gpsError}</Text>
+          </View>
+        )}
       </View>
-
-      {/* GPS Error */}
-      {gpsError && (
-        <View style={styles.gpsError}>
-          <Text style={styles.gpsErrorText}>⚠️ {gpsError}</Text>
-        </View>
-      )}
 
       {/* Right controls */}
       <View style={styles.controlsRight}>
@@ -651,67 +734,120 @@ const markerStyles = StyleSheet.create({
     borderColor: colors.primary,
     opacity: 0.4,
   },
+  badgeCount: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: colors.danger,
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+    zIndex: 1000,
+  },
+  badgeCountText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
 });
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
+  topContainer: {
+    position: 'absolute',
+    left: spacing.md,
+    right: spacing.md,
+    zIndex: 999,
+  },
+  topNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    ...shadows.md,
+  },
+  backButtonPressed: {
+    backgroundColor: colors.surfaceElevated,
+    transform: [{ scale: 0.95 }],
+  },
+  backButtonIcon: {
+    fontSize: 20,
+    color: colors.text,
+    fontWeight: '700',
+    marginTop: -1,
+  },
 
   // HUD Top
   hudTop: {
-    position: 'absolute',
-    top: spacing.lg,
-    left: spacing.md,
-    right: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: spacing.xs,
+    width: '100%',
   },
   hudCard: {
     backgroundColor: colors.glass,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.xs + 2,
+    paddingVertical: 5,
     alignItems: 'center',
-    minWidth: 56,
+    justifyContent: 'center',
+    minWidth: 52,
     borderWidth: 1,
     borderColor: colors.glassBorder,
     ...shadows.md,
   },
-  hudBig: { ...typography.title, color: colors.text },
-  hudSub: { ...typography.caption, color: colors.textMuted },
-  hudCenter: { flex: 1 },
+  hudBig: { ...typography.titleSmall, color: colors.text, fontWeight: '700' },
+  hudSub: { fontSize: 10, color: colors.textMuted, marginTop: 1, fontWeight: '500' },
+  hudCenter: {
+    flex: 1,
+    minWidth: 0,
+  },
   routeInfoCard: {
     backgroundColor: colors.glass,
     borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.glassBorder,
     ...shadows.md,
   },
-  routeInfoPrimary: { ...typography.bodyMedium, color: colors.text },
-  routeInfoSub: { ...typography.caption, color: colors.textMuted },
+  routeInfoPrimary: { ...typography.bodySmall, color: colors.text, fontWeight: '700' },
+  routeInfoSub: { fontSize: 11, color: colors.textMuted, marginTop: 1 },
   optimizeBtn: {
     backgroundColor: colors.success,
     borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.sm,
     alignItems: 'center',
+    justifyContent: 'center',
     ...shadows.colored(colors.success),
   },
-  optimizeBtnText: { color: '#fff', ...typography.bodyMedium, fontWeight: '700' },
+  optimizeBtnText: { color: '#fff', ...typography.bodySmall, fontWeight: '700' },
 
   // GPS error
   gpsError: {
-    position: 'absolute',
-    top: 90,
     alignSelf: 'center',
     backgroundColor: colors.danger,
     borderRadius: radius.full,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    marginTop: spacing.xs,
     ...shadows.md,
   },
   gpsErrorText: { color: '#fff', ...typography.bodySmall, fontWeight: '600' },
@@ -792,7 +928,7 @@ const styles = StyleSheet.create({
   panelBadge: { ...typography.label, color: colors.primary, letterSpacing: 1 },
   panelName: { ...typography.title, color: colors.text, maxWidth: '85%' },
   panelClose: { padding: spacing.xs },
-  panelCloseText: { fontSize: 18, color: colors.textMuted },
+  panelCloseText: { fontSize: 16, color: colors.textMuted },
   panelAddress: { ...typography.body, color: colors.textSecondary },
   panelMeta: { ...typography.bodySmall, color: colors.textMuted },
   panelDist: { ...typography.bodySmall, color: colors.primary, fontWeight: '600' },

@@ -3,6 +3,7 @@ import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Navigation } from './src/navigation';
 import { DatabaseService } from './src/storage/DatabaseService';
+import { ThemeProvider } from './src/theme/ThemeContext';
 
 export default function App() {
   useEffect(() => {
@@ -11,10 +12,12 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      {/* StatusBar globalmente oculta — o modo imersivo nativo (MainActivity.kt)
-          cuida de esconder também a barra de navegação inferior */}
-      <StatusBar hidden />
-      <Navigation />
+      <ThemeProvider>
+        {/* StatusBar globalmente oculta — o modo imersivo nativo (MainActivity.kt)
+            cuida de esconder também a barra de navegação inferior */}
+        <StatusBar hidden />
+        <Navigation />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }
