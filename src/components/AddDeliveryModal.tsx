@@ -11,6 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { GeocodingService } from '../services/geocoding/GeocodingService';
+import { ValhallaService } from '../services/routing/ValhallaService';
 import { DatabaseService } from '../storage/DatabaseService';
 import { colors, spacing, radius, shadows, typography } from '../theme';
 import type { DeliveryEntity } from '../types/geo';
@@ -131,6 +132,20 @@ export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
         }
       }
 
+      let snappedLat = lat;
+      let snappedLon = lon;
+      if (lat !== null && lon !== null) {
+        try {
+          const snap = await ValhallaService.locate([lon, lat], { radius: 100 });
+          if (snap.matched && snap.snapped) {
+            snappedLon = snap.snapped[0];
+            snappedLat = snap.snapped[1];
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       const delivery: Omit<DeliveryEntity, 'id'> = {
         name: form.name.trim(),
         address: form.address.trim(),
@@ -144,8 +159,8 @@ export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
         orderCode: form.orderCode.trim(),
         latitude: lat,
         longitude: lon,
-        snappedLatitude: lat,
-        snappedLongitude: lon,
+        snappedLatitude: snappedLat,
+        snappedLongitude: snappedLon,
         geocodingStatus: lat !== null ? 'success' : 'failed',
         geocodingSource: geoSource,
         routingStatus: 'pending',

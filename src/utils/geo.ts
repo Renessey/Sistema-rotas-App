@@ -95,3 +95,58 @@ export function decodePolyline(
 
   return coords;
 }
+
+/**
+ * Calculates the shortest distance in meters from a point P to a line segment AB.
+ */
+export function distanceToSegment(p: LngLat, a: LngLat, b: LngLat): number {
+  const [pLng, pLat] = p;
+  const [aLng, aLat] = a;
+  const [bLng, bLat] = b;
+
+  const midLat = ((aLat + bLat) / 2) * TO_RAD;
+  const cosLat = Math.cos(midLat);
+
+  // Convert (lon, lat) differences to local meters (equirectangular projection)
+  const degToM = EARTH_RADIUS_M * TO_RAD;
+  const dx = (bLng - aLng) * cosLat * degToM;
+  const dy = (bLat - aLat) * degToM;
+
+  const px = (pLng - aLng) * cosLat * degToM;
+  const py = (pLat - aLat) * degToM;
+
+  const segLenSq = dx * dx + dy * dy;
+  if (segLenSq === 0) {
+    return Math.sqrt(px * px + py * py);
+  }
+
+  // Projection scalar clamped between 0 and 1
+  const t = Math.max(0, Math.min(1, (px * dx + py * dy) / segLenSq));
+  const projX = t * dx;
+  const projY = t * dy;
+
+  const distX = px - projX;
+  const distY = py - projY;
+
+  return Math.sqrt(distX * distX + distY * distY);
+}
+
+/**
+ * Calculates the minimum distance in meters from a point P to an entire polyline.
+ */
+export function minDistanceToPolyline(p: LngLat, polyline: LngLat[]): number {
+  if (!polyline || polyline.length === 0) return Infinity;
+  if (polyline.length === 1) return haversine(p, polyline[0]);
+
+  let minDist = Infinity;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const d = distanceToSegment(p, polyline[i], polyline[i + 1]);
+    if (d < minDist) {
+      minDist = d;
+      // If we are already extremely close (< 2m), no need to search further
+      if (minDist < 2) return minDist;
+    }
+  }
+
+  return minDist;
+}

@@ -152,6 +152,7 @@ export const SNAP_CONFIG = {
 
 export type GeocodingProvider =
   | 'spreadsheet'
+  | 'maptiler'
   | 'brasilapi'
   | 'viacep+nominatim'
   | 'nominatim'

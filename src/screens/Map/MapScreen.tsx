@@ -32,12 +32,12 @@ import type {
   LngLat,
   FailReason,
 } from '../../types/geo';
-import { haversine, estimateDurationMeters, boundingBox } from '../../utils/geo';
+import { haversine, estimateDurationMeters, boundingBox, minDistanceToPolyline } from '../../utils/geo';
 import { colors, spacing, radius, shadows, typography, statusConfig } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
 
-const OFF_ROUTE_THRESHOLD_M = 60;
+const OFF_ROUTE_THRESHOLD_M = 35;
 
 export default function MapScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
@@ -168,7 +168,7 @@ export default function MapScreen({ navigation }: Props) {
 
       setOrder(savedOrder);
 
-      const stops = locatedDeliveries.map((d) => [d.longitude!, d.latitude!] as LngLat);
+      const stops = locatedDeliveries.map((d) => [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat);
       const waypoints = [currentLocation, ...savedOrder.map((i) => stops[i])];
 
       ValhallaService.route(waypoints, { costing: 'auto' }).then(result => {
@@ -190,7 +190,7 @@ export default function MapScreen({ navigation }: Props) {
       const pendingIndices: number[] = [];
       const stops = locatedDeliveries.map((d, idx) => {
         if (d.status !== 'completed') pendingIndices.push(idx);
-        return [d.longitude!, d.latitude!] as LngLat;
+        return [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat;
       });
 
       const optimizationStops = pendingIndices.map(i => stops[i]);
@@ -253,35 +253,68 @@ export default function MapScreen({ navigation }: Props) {
     }
   }, [route, currentLocation, locatedDeliveries]);
 
-  /* ─── Off-route detection ─── */
-  const deviatedRef = useRef(0);
-  useEffect(() => {
-    if (!navigationActive || !route || !nextStop) return;
-    const nextCoords: LngLat = [nextStop.longitude!, nextStop.latitude!];
-    const distToNext = haversine(currentLocation, nextCoords);
-    const threshold = OFF_ROUTE_THRESHOLD_M + (accuracy ?? 0);
-    if (distToNext > threshold + 500) {
-      deviatedRef.current += 1;
-      if (deviatedRef.current >= 5) {
-        deviatedRef.current = 0;
-        recalculateRoute();
+  /* ─── Route Polyline (Flat coordinates for fast off-route checks) ─── */
+  const routePolyline = useMemo(() => {
+    if (!route) return [];
+    const points: LngLat[] = [];
+    route.features.forEach((f) => {
+      if (f.geometry?.coordinates) {
+        f.geometry.coordinates.forEach((c) => points.push(c));
       }
-    } else {
-      deviatedRef.current = 0;
-    }
-  }, [currentLocation, navigationActive, route, nextStop, accuracy]);
+    });
+    return points;
+  }, [route]);
+
+  /* ─── Real-Time Recalculate & Off-Route Detection ─── */
+  const isRecalculatingRef = useRef(false);
+  const lastRecalculateTimeRef = useRef(0);
+  const consecutiveDeviationsRef = useRef(0);
 
   const recalculateRoute = useCallback(async () => {
-    if (!nextStop) return;
+    if (isRecalculatingRef.current) return;
     const remaining = orderedDeliveries.filter(
       (d) => !completedIds.has(d.id) && d.status !== 'completed',
     );
     if (remaining.length === 0) return;
-    const stops = remaining.map((d) => [d.longitude!, d.latitude!] as LngLat);
-    const result = await ValhallaService.route([currentLocation, ...stops], { costing: 'auto' });
-    setRoute(result.geojson);
-    setRouteInfo({ distance: result.distance, duration: result.duration });
-  }, [nextStop, orderedDeliveries, completedIds, currentLocation]);
+
+    isRecalculatingRef.current = true;
+    try {
+      const stops = remaining.map((d) => [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat);
+      const result = await ValhallaService.route([currentLocation, ...stops], { costing: 'auto' });
+      setRoute(result.geojson);
+      setRouteInfo({ distance: result.distance, duration: result.duration });
+      setRouteNetwork(result.fromRoadNetwork);
+      lastRecalculateTimeRef.current = Date.now();
+    } catch (e) {
+      console.warn('[Map] recalculateRoute error', e);
+    } finally {
+      isRecalculatingRef.current = false;
+    }
+  }, [orderedDeliveries, completedIds, currentLocation]);
+
+  // Monitor off-route continuously as user moves
+  useEffect(() => {
+    if (!route || routePolyline.length === 0 || !nextStop) return;
+
+    // Minimum cooldown between recalculations (2.5s) to avoid spamming the router
+    if (Date.now() - lastRecalculateTimeRef.current < 2500) return;
+    if (isRecalculatingRef.current) return;
+
+    // Calculate perpendicular distance to the closest street segment of the route
+    const distToRoute = minDistanceToPolyline(currentLocation, routePolyline);
+    const dynamicThreshold = OFF_ROUTE_THRESHOLD_M + Math.min(accuracy ?? 0, 20);
+
+    if (distToRoute > dynamicThreshold) {
+      consecutiveDeviationsRef.current += 1;
+      // Trigger recalculation on 2 consecutive GPS ticks off-route (or immediately if big jump > 70m)
+      if (consecutiveDeviationsRef.current >= 2 || distToRoute > 70) {
+        consecutiveDeviationsRef.current = 0;
+        recalculateRoute();
+      }
+    } else {
+      consecutiveDeviationsRef.current = 0;
+    }
+  }, [currentLocation, route, routePolyline, nextStop, accuracy, recalculateRoute]);
 
   /* ─── Stop actions ─── */
   const selectStop = useCallback((delivery: DeliveryEntity) => {

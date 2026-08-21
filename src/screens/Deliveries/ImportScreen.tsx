@@ -12,6 +12,7 @@ import type { RootStackParamList } from '../../navigation';
 import { ImportService } from '../../services/import/ImportService';
 import { ValidationService } from '../../services/validation/ValidationService';
 import { GeocodingService } from '../../services/geocoding/GeocodingService';
+import { ValhallaService } from '../../services/routing/ValhallaService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { colors, spacing, radius, shadows, typography } from '../../theme';
 
@@ -95,6 +96,22 @@ export default function ImportScreen({ navigation }: Props) {
             } else {
               delivery.geocodingStatus = 'failed';
               logs.push({ name: delivery.name, provider: '—', success: false });
+            }
+          }
+
+          if (delivery.latitude !== null && delivery.longitude !== null) {
+            try {
+              const snap = await ValhallaService.locate([delivery.longitude, delivery.latitude], { radius: 100 });
+              if (snap.matched && snap.snapped) {
+                delivery.snappedLongitude = snap.snapped[0];
+                delivery.snappedLatitude = snap.snapped[1];
+              } else {
+                delivery.snappedLongitude = delivery.longitude;
+                delivery.snappedLatitude = delivery.latitude;
+              }
+            } catch {
+              delivery.snappedLongitude = delivery.longitude;
+              delivery.snappedLatitude = delivery.latitude;
             }
           }
 
