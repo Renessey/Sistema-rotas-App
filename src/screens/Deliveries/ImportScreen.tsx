@@ -10,17 +10,19 @@ import {
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
-import { ImportService } from '../../services/import/ImportService';
+import { ImportService, ParsedSpreadsheet } from '../../services/import/ImportService';
 import { ValidationService } from '../../services/validation/ValidationService';
 import { GeocodingService } from '../../services/geocoding/GeocodingService';
 import { GoogleQuotaManager, QuotaExceededError } from '../../services/geocoding/GoogleQuotaManager';
 import { ValhallaService } from '../../services/routing/ValhallaService';
 import { DatabaseService } from '../../storage/DatabaseService';
+import ColumnMappingModal from '../../components/ColumnMappingModal';
+import type { ColumnMappingConfig } from '../../types/geo';
 import { colors, spacing, radius, shadows, typography } from '../../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Import'>;
 
-type Phase = 'idle' | 'reading' | 'validating' | 'geocoding' | 'done' | 'error';
+type Phase = 'idle' | 'reading' | 'mapping' | 'validating' | 'geocoding' | 'done' | 'error';
 
 interface GeoLog {
   name: string;
@@ -32,6 +34,8 @@ export default function ImportScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState('');
   const [geoLogs, setGeoLogs] = useState<GeoLog[]>([]);
+  const [parsedData, setParsedData] = useState<ParsedSpreadsheet | null>(null);
+  const [showMappingModal, setShowMappingModal] = useState(false);
   const [summary, setSummary] = useState<{
     total: number;
     valid: number;
@@ -93,20 +97,36 @@ export default function ImportScreen({ navigation }: Props) {
   const handleImport = async () => {
     try {
       setPhase('reading');
-      setMessage('Lendo arquivo…');
+      setMessage('Selecionando e lendo arquivo…');
       setGeoLogs([]);
       setSummary(null);
 
-      const rawRows = await ImportService.pickAndReadSpreadsheet();
-      if (rawRows.length === 0) {
+      const parsed = await ImportService.pickAndParseSpreadsheet();
+      if (!parsed || parsed.rows.length === 0) {
         setPhase('idle');
         setMessage('Nenhuma linha encontrada ou importação cancelada.');
         return;
       }
 
+      setParsedData(parsed);
+      setShowMappingModal(true);
+      setPhase('mapping');
+    } catch (error) {
+      console.error('[ImportScreen]', error);
+      setPhase('error');
+      setMessage('Erro ao importar o arquivo. Verifique o formato (.xlsx, .csv ou .txt).');
+    }
+  };
+
+  const processWithMapping = async (mapping: ColumnMappingConfig) => {
+    if (!parsedData || parsedData.rows.length === 0) return;
+    setShowMappingModal(false);
+
+    try {
       setPhase('validating');
       setMessage('Validando registros…');
-      const normalized = ImportService.normalizeRows(rawRows);
+
+      const normalized = ImportService.applyMapping(parsedData.rows, mapping);
       const result = ValidationService.validate(normalized);
 
       // Geocode records that have address but no coordinates
@@ -124,7 +144,7 @@ export default function ImportScreen({ navigation }: Props) {
 
         for (let i = 0; i < toGeocode.length; i++) {
           const delivery = toGeocode[i];
-          setMessage(`Geocodificando com Google (${i + 1}/${toGeocode.length})…`);
+          setMessage(`Buscando no Google Maps (${i + 1}/${toGeocode.length})…`);
 
           // 1. Tenta coordenadas já existentes na linha da planilha
           const fromRow = GeocodingService.resolveFromRow(delivery);
@@ -150,7 +170,6 @@ export default function ImportScreen({ navigation }: Props) {
                 success: false,
               });
 
-              // Marca os registros subsequentes como pendentes para resolução manual
               for (let j = i + 1; j < toGeocode.length; j++) {
                 toGeocode[j].geocodingStatus = 'pending';
               }
@@ -159,25 +178,36 @@ export default function ImportScreen({ navigation }: Props) {
 
             try {
               console.log(
-                `[ImportScreen] Geocoding #${i + 1} (Título: "${delivery.name}") → Query de Endereço: "${delivery.address}"`,
+                `[ImportScreen] Google Search #${i + 1} ("${delivery.name}") → "${delivery.address}"`,
               );
-              const geo = await GeocodingService.geocodeDelivery(delivery);
-              if (geo) {
-                delivery.latitude = geo.latitude;
-                delivery.longitude = geo.longitude;
+              const searchRes = await GeocodingService.searchByNameAndAddress({
+                name: delivery.name,
+                address: delivery.address,
+                number: delivery.number,
+                neighborhood: delivery.neighborhood,
+                city: delivery.city,
+                state: delivery.state,
+                cep: delivery.cep,
+              });
+
+              if (searchRes.success && searchRes.latitude !== undefined && searchRes.longitude !== undefined) {
+                delivery.latitude = searchRes.latitude;
+                delivery.longitude = searchRes.longitude;
                 delivery.geocodingStatus = 'success';
-                delivery.geocodingSource = geo.provider;
+                delivery.geocodingSource = searchRes.provider || 'google';
+                if (searchRes.formattedAddress) {
+                  delivery.address = searchRes.formattedAddress;
+                }
                 logs.push({
                   name: delivery.name,
-                  provider: formatProviderName(geo.provider),
+                  provider: formatProviderName(searchRes.provider || 'google'),
                   success: true,
                 });
               } else {
-                // ZERO_RESULTS: marca como pendente para revisão manual sem quebrar
                 delivery.geocodingStatus = 'failed';
                 logs.push({
                   name: delivery.name,
-                  provider: 'Google (Sem resultados)',
+                  provider: 'Não localizado',
                   success: false,
                 });
               }
@@ -235,7 +265,7 @@ export default function ImportScreen({ navigation }: Props) {
         }
       }
 
-      // Persiste todas as entregas válidas (incluindo as pendentes/sem localização)
+      // Persiste todas as entregas válidas no banco SQLite
       DatabaseService.clearDeliveries();
       result.valid.forEach((d) => DatabaseService.insertDelivery(d));
 
@@ -266,14 +296,14 @@ export default function ImportScreen({ navigation }: Props) {
 
       setPhase('done');
       setMessage(
-        `${result.valid.length} entregas importadas — ${geocodedFinal} com localização Google, ${
+        `${result.valid.length} entregas importadas — ${geocodedFinal} localizadas com Google Maps, ${
           result.valid.length - geocodedFinal
         } para resolver manualmente.`,
       );
     } catch (error) {
-      console.error('[ImportScreen]', error);
+      console.error('[ImportScreen processWithMapping]', error);
       setPhase('error');
-      setMessage('Erro ao importar o arquivo. Verifique o formato (.xlsx, .csv ou .txt).');
+      setMessage('Erro ao processar e geocodificar as linhas da planilha.');
     }
   };
 
@@ -521,6 +551,23 @@ export default function ImportScreen({ navigation }: Props) {
             </Pressable>
           </View>
         </View>
+      )}
+
+      {/* Modal de Mapeamento de Colunas da Planilha */}
+      {parsedData && (
+        <ColumnMappingModal
+          visible={showMappingModal}
+          headers={parsedData.headers}
+          firstRow={parsedData.rows[0]}
+          totalRows={parsedData.rows.length}
+          fileName={parsedData.fileName}
+          onClose={() => {
+            setShowMappingModal(false);
+            setPhase('idle');
+            setMessage('');
+          }}
+          onConfirm={processWithMapping}
+        />
       )}
     </ScrollView>
   );

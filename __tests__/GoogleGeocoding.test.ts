@@ -222,5 +222,51 @@ describe('Google Geocoding API & Rate Limit with .env Config', () => {
         QuotaExceededError,
       );
     });
+
+    it('searches by Name and Address successfully when both match', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: 'OK',
+          results: [
+            {
+              geometry: {
+                location: { lat: -22.9234, lng: -42.9734 },
+                location_type: 'ROOFTOP',
+              },
+              formatted_address: 'Rod. Amaral Peixoto, km 15 - Inoã, Maricá - RJ, Brasil',
+              name: 'Restaurante Skinão',
+            },
+          ],
+        }),
+      } as Response);
+
+      const result = await GeocodingService.searchByNameAndAddress({
+        name: 'Restaurante Skinão',
+        address: 'Inoã, Maricá',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.latitude).toBe(-22.9234);
+      expect(result.longitude).toBe(-42.9734);
+      expect(result.formattedAddress).toContain('Inoã, Maricá');
+    });
+
+    it('returns warning when neither Name nor Address can be found', async () => {
+      globalThis.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: 'ZERO_RESULTS', results: [] }),
+      } as Response);
+
+      const result = await GeocodingService.searchByNameAndAddress({
+        name: 'Local Inexistente XZY',
+        address: 'Rua Fantasma 99999',
+        city: 'Maricá',
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.matchType).toBe('none');
+      expect(result.warningMessage).toContain('Não foi possível localizar');
+    });
   });
 });

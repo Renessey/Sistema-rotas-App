@@ -5,7 +5,6 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  ScrollView,
   Alert,
   Animated,
   Dimensions,
@@ -26,20 +25,29 @@ import { ValhallaService } from '../../services/routing/ValhallaService';
 import { RouteOptimizationService } from '../../services/routing/RouteOptimizationService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { NavigationLauncher } from '../../services/navigation/NavigationLauncher';
+import { MapStyleService } from '../../services/map/MapStyleService';
+import { MapType, MapTheme, getMapStyleUrl } from '../../config/mapStyles';
+import { CustomMarkerPin } from '../../components/Map/CustomMarkerPin';
+import { MapDisplayModal } from '../../components/Map/MapDisplayModal';
+import { FloatingMapControls } from '../../components/Map/FloatingMapControls';
+import { BottomNavBar } from '../../components/Navigation/BottomNavBar';
 import type {
   DeliveryEntity,
   GeoJSONFeatureCollection,
   LngLat,
   FailReason,
+  Costing,
 } from '../../types/geo';
 import { haversine, estimateDurationMeters, boundingBox, minDistanceToPolyline } from '../../utils/geo';
 import { colors, spacing, radius, shadows, typography, statusConfig } from '../../theme';
+import { useTheme } from '../../theme/ThemeContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
 
 const OFF_ROUTE_THRESHOLD_M = 35;
 
 export default function MapScreen({ navigation }: Props) {
+  const { colors: themeColors } = useTheme();
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraRef>(null);
   const panelAnim = useRef(new Animated.Value(0)).current;
@@ -52,6 +60,13 @@ export default function MapScreen({ navigation }: Props) {
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [followGPS, setFollowGPS] = useState(false);
   const [zoom, setZoom] = useState(13);
+
+  // Map display settings & preferences
+  const [mapType, setMapType] = useState<MapType>('standard');
+  const [mapTheme, setMapTheme] = useState<MapTheme>('classic');
+  const [hideCompleted, setHideCompleted] = useState(false);
+  const [costingMode, setCostingMode] = useState<Costing>('auto');
+  const [showLayersModal, setShowLayersModal] = useState(false);
 
   // Deliveries + route
   const [deliveries, setDeliveries] = useState<DeliveryEntity[]>([]);
@@ -68,6 +83,17 @@ export default function MapScreen({ navigation }: Props) {
   const [manualCorrection, setManualCorrection] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
 
+  // Load preferences on mount
+  useEffect(() => {
+    (async () => {
+      const prefs = await MapStyleService.loadPreferences();
+      setMapType(prefs.mapType);
+      setMapTheme(prefs.mapTheme);
+      setHideCompleted(prefs.hideCompleted);
+      setCostingMode(prefs.costingMode);
+    })();
+  }, []);
+
   const locatedDeliveries = useMemo(
     () => deliveries.filter((d) => d.latitude !== null && d.longitude !== null),
     [deliveries],
@@ -80,6 +106,10 @@ export default function MapScreen({ navigation }: Props) {
   const nextStop = useMemo(() => {
     return orderedDeliveries.find((d) => !completedIds.has(d.id) && d.status !== 'completed') ?? null;
   }, [orderedDeliveries, completedIds]);
+
+  const pendingDeliveriesCount = useMemo(() => {
+    return deliveries.filter((d) => d.status === 'pending' || d.status === 'in_progress').length;
+  }, [deliveries]);
 
   /* ─── GPS ─── */
   useEffect(() => {
@@ -135,7 +165,7 @@ export default function MapScreen({ navigation }: Props) {
   }, [followGPS]);
 
   /* ─── Load deliveries ─── */
-  useEffect(() => {
+  const reloadDeliveries = useCallback(() => {
     const loaded = DatabaseService.getAllDeliveries();
     setDeliveries(loaded);
     const completed = new Set(
@@ -143,6 +173,10 @@ export default function MapScreen({ navigation }: Props) {
     );
     setCompletedIds(completed);
   }, []);
+
+  useEffect(() => {
+    reloadDeliveries();
+  }, [reloadDeliveries]);
 
   /* ─── Panel animation ─── */
   useEffect(() => {
@@ -162,75 +196,22 @@ export default function MapScreen({ navigation }: Props) {
     if (hasSequence) {
       const savedOrder = locatedDeliveries
         .map((d, index) => ({ index, sequence: d.sequence }))
-        .filter(x => x.sequence !== null)
+        .filter((x) => x.sequence !== null)
         .sort((a, b) => a.sequence! - b.sequence!)
-        .map(x => x.index);
+        .map((x) => x.index);
 
       setOrder(savedOrder);
 
       const stops = locatedDeliveries.map((d) => [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat);
       const waypoints = [currentLocation, ...savedOrder.map((i) => stops[i])];
 
-      ValhallaService.route(waypoints, { costing: 'auto' }).then(result => {
+      ValhallaService.route(waypoints, { costing: costingMode }).then((result) => {
         setRoute(result.geojson);
         setRouteInfo({ distance: result.distance, duration: result.duration });
         setRouteNetwork(result.fromRoadNetwork);
-      }).catch(e => console.warn('Saved route failed', e));
+      }).catch((e) => console.warn('Saved route failed', e));
     }
-  }, [locatedDeliveries, currentLocation, accuracy, route]);
-
-  /* ─── Optimization + Route ─── */
-  const optimizeRoute = useCallback(async () => {
-    if (locatedDeliveries.length === 0) {
-      Alert.alert('Sem Entregas', 'Importe uma planilha com entregas localizadas antes de otimizar a rota.');
-      return;
-    }
-    setOptimizing(true);
-    try {
-      const pendingIndices: number[] = [];
-      const stops = locatedDeliveries.map((d, idx) => {
-        if (d.status !== 'completed') pendingIndices.push(idx);
-        return [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat;
-      });
-
-      const optimizationStops = pendingIndices.map(i => stops[i]);
-
-      if (optimizationStops.length === 0) {
-        Alert.alert('Aviso', 'Todas as entregas já foram concluídas.');
-        setOptimizing(false);
-        return;
-      }
-
-      const optimization = await RouteOptimizationService.optimize(
-        currentLocation,
-        optimizationStops,
-        { useDuration: false },
-      );
-
-      const newOrder = optimization.order.map(i => pendingIndices[i]);
-      setOrder(newOrder);
-
-      // Persist sequence to DB
-      newOrder.forEach((stopIdx, sequence) => {
-        DatabaseService.updateDeliverySequence(locatedDeliveries[stopIdx].id, sequence);
-      });
-
-      // Route geometry
-      const waypoints = [currentLocation, ...newOrder.map((i) => stops[i])];
-      const result = await ValhallaService.route(waypoints, { costing: 'auto' });
-      setRoute(result.geojson);
-      setRouteInfo({ distance: result.distance, duration: result.duration });
-      setRouteNetwork(result.fromRoadNetwork);
-
-      // Auto-fit camera
-      setTimeout(() => fitRoute(), 300);
-    } catch (error) {
-      console.warn('[Map] optimize failed', error);
-      Alert.alert('Erro', 'Não foi possível otimizar a rota. Verifique a conexão.');
-    } finally {
-      setOptimizing(false);
-    }
-  }, [currentLocation, locatedDeliveries]);
+  }, [locatedDeliveries, currentLocation, accuracy, route, costingMode]);
 
   /* ─── Camera fit ─── */
   const fitRoute = useCallback(() => {
@@ -252,6 +233,59 @@ export default function MapScreen({ navigation }: Props) {
       );
     }
   }, [route, currentLocation, locatedDeliveries]);
+
+  /* ─── Optimization + Route ─── */
+  const optimizeRoute = useCallback(async () => {
+    if (locatedDeliveries.length === 0) {
+      Alert.alert('Sem Entregas', 'Importe uma planilha com entregas localizadas antes de otimizar a rota.');
+      return;
+    }
+    setOptimizing(true);
+    try {
+      const pendingIndices: number[] = [];
+      const stops = locatedDeliveries.map((d, idx) => {
+        if (d.status !== 'completed') pendingIndices.push(idx);
+        return [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat;
+      });
+
+      const optimizationStops = pendingIndices.map((i) => stops[i]);
+
+      if (optimizationStops.length === 0) {
+        Alert.alert('Aviso', 'Todas as entregas já foram concluídas.');
+        setOptimizing(false);
+        return;
+      }
+
+      const optimization = await RouteOptimizationService.optimize(
+        currentLocation,
+        optimizationStops,
+        { useDuration: false },
+      );
+
+      const newOrder = optimization.order.map((i) => pendingIndices[i]);
+      setOrder(newOrder);
+
+      // Persist sequence to DB
+      newOrder.forEach((stopIdx, sequence) => {
+        DatabaseService.updateDeliverySequence(locatedDeliveries[stopIdx].id, sequence);
+      });
+
+      // Route geometry
+      const waypoints = [currentLocation, ...newOrder.map((i) => stops[i])];
+      const result = await ValhallaService.route(waypoints, { costing: costingMode });
+      setRoute(result.geojson);
+      setRouteInfo({ distance: result.distance, duration: result.duration });
+      setRouteNetwork(result.fromRoadNetwork);
+
+      // Auto-fit camera
+      setTimeout(() => fitRoute(), 300);
+    } catch (error) {
+      console.warn('[Map] optimize failed', error);
+      Alert.alert('Erro', 'Não foi possível otimizar a rota. Verifique a conexão.');
+    } finally {
+      setOptimizing(false);
+    }
+  }, [currentLocation, locatedDeliveries, costingMode, fitRoute]);
 
   /* ─── Route Polyline (Flat coordinates for fast off-route checks) ─── */
   const routePolyline = useMemo(() => {
@@ -280,7 +314,7 @@ export default function MapScreen({ navigation }: Props) {
     isRecalculatingRef.current = true;
     try {
       const stops = remaining.map((d) => [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat);
-      const result = await ValhallaService.route([currentLocation, ...stops], { costing: 'auto' });
+      const result = await ValhallaService.route([currentLocation, ...stops], { costing: costingMode });
       setRoute(result.geojson);
       setRouteInfo({ distance: result.distance, duration: result.duration });
       setRouteNetwork(result.fromRoadNetwork);
@@ -290,23 +324,20 @@ export default function MapScreen({ navigation }: Props) {
     } finally {
       isRecalculatingRef.current = false;
     }
-  }, [orderedDeliveries, completedIds, currentLocation]);
+  }, [orderedDeliveries, completedIds, currentLocation, costingMode]);
 
   // Monitor off-route continuously as user moves
   useEffect(() => {
     if (!route || routePolyline.length === 0 || !nextStop) return;
 
-    // Minimum cooldown between recalculations (2.5s) to avoid spamming the router
     if (Date.now() - lastRecalculateTimeRef.current < 2500) return;
     if (isRecalculatingRef.current) return;
 
-    // Calculate perpendicular distance to the closest street segment of the route
     const distToRoute = minDistanceToPolyline(currentLocation, routePolyline);
     const dynamicThreshold = OFF_ROUTE_THRESHOLD_M + Math.min(accuracy ?? 0, 20);
 
     if (distToRoute > dynamicThreshold) {
       consecutiveDeviationsRef.current += 1;
-      // Trigger recalculation on 2 consecutive GPS ticks off-route (or immediately if big jump > 70m)
       if (consecutiveDeviationsRef.current >= 2 || distToRoute > 70) {
         consecutiveDeviationsRef.current = 0;
         recalculateRoute();
@@ -345,8 +376,8 @@ export default function MapScreen({ navigation }: Props) {
     );
     setCompletedIds((prev) => new Set(prev).add(stopId));
     setActiveStop(null);
-    if (navigationActive) recalculateRoute();
-  }, [activeStop, navigationActive, recalculateRoute]);
+    if (navigationActive || hideCompleted) recalculateRoute();
+  }, [activeStop, navigationActive, hideCompleted, recalculateRoute]);
 
   const skipStop = useCallback((reason: FailReason = 'absent') => {
     if (!activeStop) return;
@@ -360,23 +391,7 @@ export default function MapScreen({ navigation }: Props) {
     if (navigationActive) recalculateRoute();
   }, [activeStop, navigationActive, recalculateRoute]);
 
-  const handleManualDrag = useCallback(
-    (delivery: DeliveryEntity, lngLat: LngLat) => {
-      if (!delivery.latitude || !delivery.longitude) return;
-      DatabaseService.updateDeliveryCoords(delivery.id, lngLat[1], lngLat[0], lngLat[1], lngLat[0], 'manual');
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === delivery.id
-            ? { ...d, latitude: lngLat[1], longitude: lngLat[0], snappedLatitude: lngLat[1], snappedLongitude: lngLat[0], geocodingSource: 'manual' }
-            : d,
-        ),
-      );
-      if (navigationActive) recalculateRoute();
-    },
-    [navigationActive, recalculateRoute],
-  );
-
-  /* ─── Markers ─── */
+  /* ─── Custom Pin Markers (TASK-06 / TASK-07) ─── */
   const deliveryMarkers = useMemo(() => {
     const sequenceMap = new Map<number, number>();
     order.forEach((stopIdx, i) => {
@@ -391,58 +406,50 @@ export default function MapScreen({ navigation }: Props) {
       grouped.get(key)!.deliveries.push(d);
     });
 
-    return Array.from(grouped.entries()).map(([key, group]) => {
-      const ds = group.deliveries;
-      const primaryD = ds[0];
-      const seq = sequenceMap.get(primaryD.id);
+    return Array.from(grouped.entries())
+      .filter(([_, group]) => {
+        if (!hideCompleted) return true;
+        // If hide completed is active, exclude points where all orders are completed
+        return !group.deliveries.every(
+          (d) => completedIds.has(d.id) || d.status === 'completed',
+        );
+      })
+      .map(([key, group]) => {
+        const ds = group.deliveries;
+        const primaryD = ds[0];
+        const seq = sequenceMap.get(primaryD.id);
 
-      const isActive = activeStop && ds.some(d => d.id === activeStop.id);
-      const isNext = nextStop && ds.some(d => d.id === nextStop.id);
-      const isDone = ds.every(d => completedIds.has(d.id) || d.status === 'completed');
+        const isActive = !!(activeStop && ds.some((d) => d.id === activeStop.id));
+        const isNext = !!(nextStop && ds.some((d) => d.id === nextStop.id));
+        const isDone = ds.every((d) => completedIds.has(d.id) || d.status === 'completed');
+        const isFailed = ds.some((d) => d.status === 'failed');
 
-      const coords: LngLat = [primaryD.longitude!, primaryD.latitude!];
+        const coords: LngLat = [primaryD.longitude!, primaryD.latitude!];
+        const zIndex = isNext || isActive ? 999 : 1;
 
-      const markerColor = isDone
-        ? colors.success
-        : isNext
-          ? colors.primary
-          : isActive
-            ? colors.warning
-            : colors.danger;
-
-      const zIndex = isNext || isActive ? 999 : 1;
-
-      return (
-        <Marker
-          key={key}
-          id={`group-${key}`}
-          lngLat={coords}
-          anchor="center"
-          onPress={() => selectStop(primaryD)}
-        >
-          <Pressable
+        return (
+          <Marker
+            key={key}
+            id={`group-${key}`}
+            lngLat={coords}
+            anchor="bottom"
             onPress={() => selectStop(primaryD)}
-            style={[
-              markerStyles.pin,
-              { backgroundColor: markerColor, zIndex },
-              isNext && markerStyles.pinNext,
-              isActive && markerStyles.pinActive,
-            ]}
           >
-            <Text style={markerStyles.pinText}>
-              {seq !== undefined ? seq + 1 : '?'}
-            </Text>
-            {ds.length > 1 && (
-              <View style={markerStyles.badgeCount}>
-                <Text style={markerStyles.badgeCountText}>{ds.length}</Text>
-              </View>
-            )}
-            {isNext && <View style={markerStyles.pinPulse} />}
-          </Pressable>
-        </Marker>
-      );
-    });
-  }, [locatedDeliveries, order, activeStop, nextStop, completedIds, selectStop]);
+            <Pressable onPress={() => selectStop(primaryD)}>
+              <CustomMarkerPin
+                sequenceNumber={seq !== undefined ? seq + 1 : '?'}
+                status={primaryD.status}
+                isActive={isActive}
+                isNext={isNext}
+                isCompleted={isDone}
+                isFailed={isFailed}
+                count={ds.length}
+              />
+            </Pressable>
+          </Marker>
+        );
+      });
+  }, [locatedDeliveries, order, activeStop, nextStop, completedIds, hideCompleted, selectStop]);
 
   /* ─── Helpers ─── */
   const formatDistance = (m: number) =>
@@ -459,26 +466,26 @@ export default function MapScreen({ navigation }: Props) {
   const activeStopDistance = activeStop
     ? activeStopIndex > 0
       ? haversine(
-        [orderedDeliveries[activeStopIndex - 1].longitude!, orderedDeliveries[activeStopIndex - 1].latitude!],
-        [activeStop.longitude!, activeStop.latitude!],
-      )
+          [orderedDeliveries[activeStopIndex - 1].longitude!, orderedDeliveries[activeStopIndex - 1].latitude!],
+          [activeStop.longitude!, activeStop.latitude!],
+        )
       : haversine(currentLocation, [activeStop.longitude!, activeStop.latitude!])
     : 0;
 
   const panelTranslate = panelAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [300, 0],
+    outputRange: [360, 0],
   });
 
   const speedKmh = speed !== null ? Math.round(speed * 3.6) : null;
   const remainingStops = orderedDeliveries.filter((d) => !completedIds.has(d.id)).length;
+  const currentStyleUrl = getMapStyleUrl(mapType, mapTheme);
 
-  /* ─── Render ─── */
   return (
     <View style={styles.container}>
       <MapLibreMap
         style={styles.map}
-        mapStyle="https://api.maptiler.com/maps/streets-v2/style.json?key=gK1k9hgPpqK3yZo3UbrJ"
+        mapStyle={currentStyleUrl}
         compass={true}
         scaleBar={false}
         onRegionDidChange={(e) => {
@@ -501,7 +508,7 @@ export default function MapScreen({ navigation }: Props) {
             <Layer
               id="route-shadow"
               type="line"
-              paint={{ 'line-color': '#000', 'line-width': 10, 'line-opacity': 0.07 }}
+              paint={{ 'line-color': '#000000', 'line-width': 10, 'line-opacity': 0.12 }}
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
             />
             <Layer
@@ -514,9 +521,9 @@ export default function MapScreen({ navigation }: Props) {
               id="route-dash"
               type="line"
               paint={{
-                'line-color': '#fff',
+                'line-color': '#FFFFFF',
                 'line-width': 2,
-                'line-opacity': 0.5,
+                'line-opacity': 0.6,
                 'line-dasharray': [0, 4],
               }}
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
@@ -609,38 +616,63 @@ export default function MapScreen({ navigation }: Props) {
         )}
       </View>
 
-      {/* Right controls */}
-      <View style={styles.controlsRight}>
-        <Pressable
-          style={[styles.ctrlBtn, followGPS && { backgroundColor: colors.primary }]}
-          onPress={() => {
-            const next = !followGPS;
-            setFollowGPS(next);
-            cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
-          }}
-        >
-          <Text style={[styles.ctrlBtnText, followGPS && { color: '#fff' }]}>⌖</Text>
-        </Pressable>
-        <View style={styles.ctrlDivider} />
-        <Pressable style={styles.ctrlBtn} onPress={() => cameraRef.current?.zoomTo(zoom + 1, { duration: 300 })}>
-          <Text style={styles.ctrlBtnText}>+</Text>
-        </Pressable>
-        <View style={styles.ctrlDivider} />
-        <Pressable style={styles.ctrlBtn} onPress={() => cameraRef.current?.zoomTo(zoom - 1, { duration: 300 })}>
-          <Text style={styles.ctrlBtnText}>−</Text>
-        </Pressable>
-      </View>
+      {/* Floating Action Controls (Camadas, FitBounds, Seguir GPS, Zoom, Atualizar) */}
+      <FloatingMapControls
+        followGPS={followGPS}
+        hasRoute={!!route}
+        onOpenLayers={() => setShowLayersModal(true)}
+        onFitBounds={fitRoute}
+        onToggleFollowGPS={() => {
+          const next = !followGPS;
+          setFollowGPS(next);
+          cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
+        }}
+        onZoomIn={() => cameraRef.current?.zoomTo(zoom + 1, { duration: 300 })}
+        onZoomOut={() => cameraRef.current?.zoomTo(zoom - 1, { duration: 300 })}
+        onRefresh={() => {
+          reloadDeliveries();
+          if (route) recalculateRoute();
+        }}
+      />
 
-      {/* "Fit route" fab */}
-      {route && (
-        <Pressable style={styles.fitFab} onPress={fitRoute}>
-          <Text style={styles.fitFabText}>🎯</Text>
-        </Pressable>
-      )}
+      {/* Modal de Exibição / Camadas do Mapa */}
+      <MapDisplayModal
+        visible={showLayersModal}
+        selectedType={mapType}
+        selectedTheme={mapTheme}
+        hideCompleted={hideCompleted}
+        costingMode={costingMode}
+        onClose={() => setShowLayersModal(false)}
+        onSelectType={async (t) => {
+          setMapType(t);
+          await MapStyleService.setMapType(t);
+        }}
+        onSelectTheme={async (th) => {
+          setMapTheme(th);
+          await MapStyleService.setMapTheme(th);
+        }}
+        onToggleHideCompleted={async (val) => {
+          setHideCompleted(val);
+          await MapStyleService.setHideCompleted(val);
+        }}
+        onSelectCostingMode={async (cm) => {
+          setCostingMode(cm);
+          await MapStyleService.setCostingMode(cm);
+          if (route) recalculateRoute();
+        }}
+      />
 
       {/* ── Stop detail panel (Bottom Sheet) ── */}
       {showPanel && activeStop && (
-        <Animated.View style={[styles.panel, { transform: [{ translateY: panelTranslate }], paddingBottom: insets.bottom + spacing.xl }]}>
+        <Animated.View
+          style={[
+            styles.panel,
+            {
+              transform: [{ translateY: panelTranslate }],
+              paddingBottom: insets.bottom + spacing.xl + 50,
+            },
+          ]}
+        >
           {/* Handle */}
           <View style={styles.panelHandle} />
 
@@ -740,63 +772,22 @@ export default function MapScreen({ navigation }: Props) {
           </Pressable>
         </Animated.View>
       )}
+
+      {/* Barra de Navegação Inferior (Fixa na tela do mapa) */}
+      <View style={styles.bottomNavWrapper} pointerEvents="box-none">
+        <BottomNavBar
+          activeTab="Map"
+          onSelectTab={(tab) => {
+            if (tab === 'Home') navigation.navigate('Home');
+            else if (tab === 'Deliveries') navigation.navigate('Deliveries');
+            else if (tab === 'Settings') navigation.navigate('Settings');
+          }}
+          pendingCount={pendingDeliveriesCount}
+        />
+      </View>
     </View>
   );
 }
-
-/* ─── Styles ─── */
-const markerStyles = StyleSheet.create({
-  pin: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2.5,
-    borderColor: '#fff',
-    ...shadows.md,
-  },
-  pinNext: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    borderColor: '#fff',
-    borderWidth: 3,
-  },
-  pinActive: {
-    borderColor: colors.warning,
-    borderWidth: 3,
-  },
-  pinText: { color: '#fff', fontSize: 13, fontWeight: '800' },
-  pinPulse: {
-    position: 'absolute',
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    borderWidth: 2,
-    borderColor: colors.primary,
-    opacity: 0.4,
-  },
-  badgeCount: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    backgroundColor: colors.danger,
-    borderRadius: 10,
-    width: 20,
-    height: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#fff',
-    zIndex: 1000,
-  },
-  badgeCountText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-});
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -895,50 +886,24 @@ const styles = StyleSheet.create({
   },
   gpsErrorText: { color: '#fff', ...typography.bodySmall, fontWeight: '600' },
 
-  // Controls right
-  controlsRight: {
-    position: 'absolute',
-    right: spacing.md,
-    bottom: 240,
-    backgroundColor: colors.glass,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    ...shadows.md,
-  },
-  ctrlBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
-  ctrlBtnText: { fontSize: 22, color: colors.text, fontWeight: '700' },
-  ctrlDivider: { height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
-
-  // Fit FAB
-  fitFab: {
-    position: 'absolute',
-    right: spacing.md,
-    bottom: 340,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.glass,
-    borderWidth: 1,
-    borderColor: colors.glassBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.md,
-  },
-  fitFabText: { fontSize: 20 },
-
   // User marker
   userMarkerRing: {
-    width: 36, height: 36, borderRadius: 18,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.primary + '20',
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   userMarkerOuter: {
-    width: 20, height: 20, borderRadius: 10,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     backgroundColor: colors.primary + '40',
-    borderWidth: 2, borderColor: colors.primary,
-    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   userMarkerInner: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary },
 
@@ -952,13 +917,14 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: radius.xxl,
     borderTopRightRadius: radius.xxl,
     padding: spacing.xl,
-    paddingBottom: spacing.xxxl,
     gap: spacing.sm,
+    zIndex: 100,
     ...shadows.xl,
   },
   panelHandle: {
     alignSelf: 'center',
-    width: 40, height: 4,
+    width: 40,
+    height: 4,
     backgroundColor: colors.border,
     borderRadius: radius.full,
     marginBottom: spacing.sm,
@@ -978,7 +944,9 @@ const styles = StyleSheet.create({
 
   externalRow: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
   externalBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: colors.surfaceElevated,
     borderRadius: radius.sm,
     paddingHorizontal: spacing.sm,
@@ -996,4 +964,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   actionBtnText: { color: '#fff', ...typography.bodyMedium, fontWeight: '800' },
+
+  bottomNavWrapper: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 50,
+  },
 });

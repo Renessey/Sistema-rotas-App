@@ -32,21 +32,15 @@ const ABBREVIATIONS: [RegExp, string][] = [
   [/\bDep\.\s*/i, 'Deputado '],
 ];
 
-/** Padrões de complemento que devem ser removidos da query de geocodificação */
+/** Padrões de complemento que devem ser removidos da query de geocodificação (sem consumir o resto do endereço) */
 const COMPLEMENT_NOISE: RegExp[] = [
-  /\bAptos?\b.*/i,
-  /\bApartamentos?\b.*/i,
-  /\bAndar\b.*/i,
-  /\bSala\b.*/i,
-  /\bBloco\s+[A-Z0-9]+\b/i,
-  /\bBl\s+[A-Z0-9]+\b/i,
-  /\bCasa\s+\d+\b/i,
-  /\bFundos\b/i,
-  /\bSobre Loja\b/i,
-  /\bSobrado\b/i,
-  /\bKmm?\s*[\d,.]+\b/i,
-  /\bS\/N\b/i,    // sem número — removido p/ melhorar busca
-  /\bS\.N\.\b/i,
+  /\b(?:Aptos?|Apartamentos?|Apto|Ap|Sala|Salas|Conjunto|Conj|Bloco|Bl|Casa|Andar|Sobre\s*Loja|Sobreloja|Sobrado|Lote|Quadra|Qd|Lt)\.?\s*[\w\d-]+\b/gi,
+  /\b(?:Aptos?|Apartamentos?|Apto|Ap|Sala|Salas|Conjunto|Conj|Bloco|Bl|Casa|Andar|Sobre\s*Loja|Sobreloja|Sobrado)\b/gi,
+  /\bFundos\b/gi,
+  /\bFds\b/gi,
+  /\bKmm?\s*[\d,.]+\b/gi,
+  /\bS\/N\b/gi,    // sem número
+  /\bS\.N\.\b/gi,
 ];
 
 /** Estado: mapeia UF para nome completo e vice-versa */
@@ -85,8 +79,13 @@ export function stripComplementNoise(address: string): string {
   for (const noise of COMPLEMENT_NOISE) {
     result = result.replace(noise, '').trim();
   }
-  // Remove vírgulas/traços soltos no final
-  return result.replace(/[,\-–\s]+$/, '').trim();
+  // Remove vírgulas/traços soltos e espaços duplicados
+  return result
+    .replace(/,\s*,+/g, ',')
+    .replace(/[-–—]\s*[-–—]+/g, '-')
+    .replace(/[,\-–—\s]+$/, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** Extrai e formata CEP (retorna '00000-000' ou null) */
@@ -128,7 +127,7 @@ export function sanitizeAddress(address: string): string {
   const commercialPrefixes = /^(?:Comércio|Comercio|Mercado|Supermercado|Padaria|Farmácia|Farmacia|Drogaria|Loja|Posto|Bar|Restaurante|Oficina|Academia|Igreja|Escola|Colégio|Colegio|Açougue|Acougue|Pizzaria|Lanchonete|Depósito|Deposito|Bazar|Armazém|Armazem)\s+[^,-–—:]+[-–—:,]\s*/iu;
   result = result.replace(commercialPrefixes, '');
 
-  // 4. Remove ruídos de complemento (Apto, Bloco, Sala, etc.)
+  // 4. Remove ruídos de complemento isolados
   result = stripComplementNoise(result);
 
   return result.trim();
@@ -146,7 +145,10 @@ export function buildGoogleGeocodingQuery(params: {
   state?: string;
   cep?: string;
 }): string {
-  const street = sanitizeAddress(params.address);
+  if (!params.address && !params.cep) return '';
+
+  const rawAddress = (params.address ?? '').trim();
+  const street = sanitizeAddress(rawAddress);
   const rawNumber = (params.number ?? '').trim();
   const number = rawNumber && !rawNumber.match(/^(?:s\/n|sem\s+n(?:[úu]mero)?|0)$/i) ? rawNumber : '';
   const neighborhood = (params.neighborhood ?? '').trim();
@@ -156,19 +158,23 @@ export function buildGoogleGeocodingQuery(params: {
   const cleanCep = params.cep ? extractCep(params.cep) || params.cep.replace(/\D/g, '') : '';
 
   // Formatação hierárquica: ${rua}, ${numero} - ${bairro}, ${cidade} - ${uf}, ${cep}
-  const streetWithNumber = number ? `${street}, ${number}` : street;
+  const streetWithNumber = number && !street.includes(number) ? `${street}, ${number}` : street;
   
   let result = streetWithNumber;
-  if (neighborhood) {
+  if (neighborhood && !street.toLowerCase().includes(neighborhood.toLowerCase())) {
     result = result ? `${result} - ${neighborhood}` : neighborhood;
   }
   
   if (city || state) {
-    const cityState = [city, state].filter(Boolean).join(' - ');
-    result = result ? `${result}, ${cityState}` : cityState;
+    const hasCity = city && !street.toLowerCase().includes(city.toLowerCase());
+    const hasState = state && !street.toUpperCase().includes(state.toUpperCase());
+    const cityState = [hasCity ? city : '', hasState ? state : ''].filter(Boolean).join(' - ');
+    if (cityState) {
+      result = result ? `${result}, ${cityState}` : cityState;
+    }
   }
 
-  if (cleanCep) {
+  if (cleanCep && !street.includes(cleanCep)) {
     result = result ? `${result}, ${cleanCep}` : cleanCep;
   }
 

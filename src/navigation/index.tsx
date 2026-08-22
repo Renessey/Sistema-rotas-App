@@ -5,6 +5,7 @@ import HomeScreen from '../screens/Home/HomeScreen';
 import ImportScreen from '../screens/Deliveries/ImportScreen';
 import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
 import MapScreen from '../screens/Map/MapScreen';
+import SettingsScreen from '../screens/Settings/SettingsScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
@@ -12,6 +13,7 @@ export type RootStackParamList = {
   Import: undefined;
   Deliveries: undefined;
   Map: undefined;
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -47,12 +49,17 @@ export function Navigation() {
         <Stack.Screen
           name="Deliveries"
           component={DeliveriesScreen}
-          options={{ title: 'Entregas' }}
+          options={{ title: 'Entregas', headerShown: false }}
         />
         {/* MapScreen fica 100% tela cheia de borda a borda */}
         <Stack.Screen
           name="Map"
           component={MapScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Settings"
+          component={SettingsScreen}
           options={{ headerShown: false }}
         />
       </Stack.Navigator>

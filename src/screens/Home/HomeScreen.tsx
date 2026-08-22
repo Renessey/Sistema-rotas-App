@@ -33,6 +33,8 @@ import { ValhallaService } from '../../services/routing/ValhallaService';
 import { spacing, radius, shadows, typography } from '../../theme';
 import { useTheme } from '../../theme/ThemeContext';
 
+import { BottomNavBar } from '../../components/Navigation/BottomNavBar';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -112,44 +114,57 @@ export default function HomeScreen({ navigation }: Props) {
   const progress = stats.total > 0 ? stats.completed / stats.total : 0;
 
   return (
-    <ScrollView
-      style={screen.scroll}
-      contentContainerStyle={[
-        screen.content,
-        {
-          paddingTop: Math.max(insets.top, spacing.md),
-          paddingBottom: Math.max(insets.bottom, spacing.xl),
-        },
-      ]}
-      showsVerticalScrollIndicator={false}
-      bounces={false}
-    >
-      <Animated.View
-        style={[screen.inner, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView
+        style={screen.scroll}
+        contentContainerStyle={[
+          screen.content,
+          {
+            paddingTop: Math.max(insets.top, spacing.md),
+            paddingBottom: spacing.xxl,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
       >
-        {/* ① Header */}
-        <AppHeader />
+        <Animated.View
+          style={[screen.inner, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+        >
+          {/* ① Header */}
+          <AppHeader />
 
-        {/* ② GPS */}
-        <GpsCard
-          locationText={locationText}
-          accuracy={gpsAccuracy}
-          onPress={checkLocation}
-        />
+          {/* ② GPS */}
+          <GpsCard
+            locationText={locationText}
+            accuracy={gpsAccuracy}
+            onPress={checkLocation}
+          />
 
-        {/* ③ Stats — só mostra com dados */}
-        {stats.total > 0 && <StatsGrid stats={stats} />}
+          {/* ③ Stats — só mostra com dados */}
+          {stats.total > 0 && <StatsGrid stats={stats} />}
 
-        {/* ④ Progresso — só mostra com dados */}
-        {stats.total > 0 && <ProgressCard completed={stats.completed} total={stats.total} progress={progress} />}
+          {/* ④ Progresso — só mostra com dados */}
+          {stats.total > 0 && <ProgressCard completed={stats.completed} total={stats.total} progress={progress} />}
 
-        {/* ⑤ Conectividade */}
-        <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
+          {/* ⑤ Conectividade */}
+          <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
 
-        {/* ⑥ Ações */}
-        <QuickActions stats={stats} navigation={navigation} onDeleted={refreshStats} />
-      </Animated.View>
-    </ScrollView>
+          {/* ⑥ Ações */}
+          <QuickActions stats={stats} navigation={navigation} onDeleted={refreshStats} />
+        </Animated.View>
+      </ScrollView>
+
+      {/* Barra de Navegação Inferior */}
+      <BottomNavBar
+        activeTab="Home"
+        onSelectTab={(tab) => {
+          if (tab === 'Map') navigation.navigate('Map');
+          else if (tab === 'Deliveries') navigation.navigate('Deliveries');
+          else if (tab === 'Settings') navigation.navigate('Settings');
+        }}
+        pendingCount={stats.pending}
+      />
+    </View>
   );
 }
 

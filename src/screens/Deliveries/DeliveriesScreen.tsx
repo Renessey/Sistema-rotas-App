@@ -11,6 +11,7 @@ import {
   Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import { DatabaseService } from '../../storage/DatabaseService';
@@ -18,6 +19,7 @@ import type { DeliveryEntity, DeliveryStatus, FailReason } from '../../types/geo
 import { colors, spacing, radius, shadows, typography, statusConfig } from '../../theme';
 import { NavigationLauncher } from '../../services/navigation/NavigationLauncher';
 import { AddDeliveryModal } from '../../components/AddDeliveryModal';
+import { BottomNavBar } from '../../components/Navigation/BottomNavBar';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Deliveries'>;
 
@@ -33,6 +35,7 @@ const FILTER_TABS: { key: FilterTab; label: string }[] = [
 ];
 
 export default function DeliveriesScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [all, setAll] = useState<DeliveryEntity[]>([]);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
@@ -122,8 +125,24 @@ export default function DeliveriesScreen({ navigation }: Props) {
     />
   );
 
+  const pendingCount = all.filter((d) => d.status === 'pending' || d.status === 'in_progress').length;
+
   return (
     <View style={styles.container}>
+      {/* Top Header */}
+      <View style={[styles.screenHeader, { paddingTop: Math.max(insets.top, spacing.xs) + spacing.xs }]}>
+        <View>
+          <Text style={styles.screenHeaderTitle}>Endereços & Entregas</Text>
+          <Text style={styles.screenHeaderSubtitle}>{all.length} paradas cadastradas</Text>
+        </View>
+        <Pressable
+          style={styles.headerAddBtn}
+          onPress={() => setShowAddModal(true)}
+        >
+          <Text style={styles.headerAddBtnText}>+ Nova Parada</Text>
+        </Pressable>
+      </View>
+
       {/* Search Bar */}
       <Animated.View style={[styles.searchBar, { opacity: searchAnim }]}>
         <Text style={styles.searchIcon}>🔍</Text>
@@ -216,6 +235,17 @@ export default function DeliveriesScreen({ navigation }: Props) {
         visible={showAddModal}
         onClose={() => setShowAddModal(false)}
         onSaved={reload}
+      />
+
+      {/* Barra de Navegação Inferior */}
+      <BottomNavBar
+        activeTab="Deliveries"
+        onSelectTab={(tab) => {
+          if (tab === 'Map') navigation.navigate('Map');
+          else if (tab === 'Home') navigation.navigate('Home');
+          else if (tab === 'Settings') navigation.navigate('Settings');
+        }}
+        pendingCount={pendingCount}
       />
     </View>
   );
@@ -355,11 +385,42 @@ function FailModal({ delivery, onSelect, onClose }: {
 /* ─── Styles ─── */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  screenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  screenHeaderTitle: {
+    ...typography.displayMedium,
+    color: colors.primary,
+    fontSize: 22,
+  },
+  screenHeaderSubtitle: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  headerAddBtn: {
+    backgroundColor: colors.primaryGhost,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderWidth: 1,
+    borderColor: colors.primary + '44',
+  },
+  headerAddBtnText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    margin: spacing.md,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
     borderWidth: 1,
@@ -374,7 +435,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   clearBtn: { fontSize: 16, color: colors.textMuted, padding: spacing.xs },
-  tabBar: { paddingHorizontal: spacing.md, gap: spacing.sm, paddingBottom: spacing.sm },
+  tabBar: { paddingHorizontal: spacing.md, gap: spacing.sm, paddingBottom: spacing.sm, paddingTop: spacing.xs },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -400,7 +461,7 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: spacing.xl,
-    bottom: spacing.xl,
+    bottom: 75,
     width: 56,
     height: 56,
     borderRadius: 28,

@@ -45,8 +45,182 @@ interface GoogleGeocodeApiResponse {
  *   5. ViaCEP — Enriquece nome de rua oficial para nova consulta
  *   6. BrasilAPI — Fallback final por centroide de CEP (quando não há rua)
  */
+export interface SearchLocationResult {
+  success: boolean;
+  latitude?: number;
+  longitude?: number;
+  formattedAddress?: string;
+  placeName?: string;
+  matchType?: 'exact_place' | 'exact_address' | 'none';
+  provider?: string;
+  warningMessage?: string;
+}
+
 export class GeocodingService {
   private static memCache = new Map<string, GeocodeResult>();
+
+  /**
+   * Busca combinada inteligente por Nome e Endereço.
+   * Se ambos ou o endereço forem localizados no Google, retorna com sucesso e coordenadas.
+   * Se não encontrar nenhum dos dois, retorna com aviso claro e detalhado.
+   */
+  static async searchByNameAndAddress(params: {
+    name?: string;
+    address: string;
+    number?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    cep?: string;
+  }): Promise<SearchLocationResult> {
+    const rawName = (params.name ?? '').trim();
+    const rawAddress = (params.address ?? '').trim();
+
+    if (!rawAddress && !params.cep && !rawName) {
+      return {
+        success: false,
+        matchType: 'none',
+        warningMessage: 'Informe o nome do local ou cliente e o endereço para realizar a busca.',
+      };
+    }
+
+    const cleanCep = params.cep
+      ? extractCep(params.cep.replace(/\D/g, '').padStart(8, '0').slice(0, 8))
+      : null;
+
+    const addressQuery = buildGoogleGeocodingQuery({
+      address: rawAddress,
+      number: params.number,
+      neighborhood: params.neighborhood,
+      city: params.city,
+      state: params.state,
+      cep: cleanCep ?? undefined,
+    });
+
+    const isGenericName = !rawName || rawName === 'Cliente sem nome' || rawName.startsWith('Entrega #');
+
+    // 1. Tenta busca de estabelecimento (Nome + Endereço/Bairro) via Google Places
+    if (!isGenericName && (addressQuery || rawAddress)) {
+      const combinedPlaceQuery = `${rawName}, ${addressQuery || rawAddress}`;
+      try {
+        const placeResult = await GeocodingService.googlePlacesSearch(combinedPlaceQuery);
+        if (placeResult) {
+          return {
+            success: true,
+            latitude: placeResult.latitude,
+            longitude: placeResult.longitude,
+            formattedAddress: placeResult.formattedAddress,
+            placeName: rawName,
+            matchType: 'exact_place',
+            provider: 'Google Places',
+          };
+        }
+      } catch (e) {
+        if (e instanceof QuotaExceededError) throw e;
+      }
+    }
+
+    // 2. Tenta Google Geocoding pelo endereço completo
+    if (addressQuery) {
+      try {
+        const geoResult = await GeocodingService.googleGeocode(addressQuery);
+        if (geoResult) {
+          return {
+            success: true,
+            latitude: geoResult.latitude,
+            longitude: geoResult.longitude,
+            formattedAddress: geoResult.formattedAddress,
+            placeName: rawName || undefined,
+            matchType: 'exact_address',
+            provider: 'Google Maps',
+          };
+        }
+      } catch (e) {
+        if (e instanceof QuotaExceededError) throw e;
+      }
+    }
+
+    // 3. Fallback pela cascata de geocodificação
+    try {
+      const fallbackResult = await GeocodingService.geocodeDelivery({
+        name: rawName,
+        address: rawAddress,
+        number: params.number || '',
+        neighborhood: params.neighborhood || '',
+        city: params.city || '',
+        state: params.state || '',
+        cep: params.cep || '',
+      } as any);
+
+      if (fallbackResult) {
+        return {
+          success: true,
+          latitude: fallbackResult.latitude,
+          longitude: fallbackResult.longitude,
+          formattedAddress: fallbackResult.formattedAddress,
+          placeName: rawName || undefined,
+          matchType: 'exact_address',
+          provider: fallbackResult.provider,
+        };
+      }
+    } catch {
+      // ignore
+    }
+
+    // 4. Se não encontrar, retorna aviso detalhado
+    const terms = [
+      rawName && !isGenericName ? `Nome: "${rawName}"` : '',
+      rawAddress ? `Endereço: "${rawAddress}"` : '',
+      params.city ? `Cidade: "${params.city}"` : '',
+    ].filter(Boolean).join(' e ');
+
+    return {
+      success: false,
+      matchType: 'none',
+      warningMessage: `⚠️ Não foi possível localizar o ponto com ${terms || 'os dados informados'}. Verifique se o nome do local ou o endereço estão corretos.`,
+    };
+  }
+
+  /** Google Places API — Text Search para estabelecimentos e POIs */
+  static async googlePlacesSearch(query: string): Promise<GeocodeResult | null> {
+    if (!query || query.trim().length === 0) return null;
+
+    try {
+      const apiKey = getGoogleMapsApiKey();
+      const encodedQuery = encodeURIComponent(query);
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodedQuery}&region=br&language=pt-BR&key=${apiKey}`;
+
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as {
+        status: string;
+        results?: Array<{
+          geometry: { location: { lat: number; lng: number } };
+          formatted_address?: string;
+          name?: string;
+          place_id?: string;
+        }>;
+      };
+
+      if (data.status === 'OK' && data.results && data.results.length > 0) {
+        const place = data.results[0];
+        const { lat, lng } = place.geometry.location;
+        if (typeof lat === 'number' && typeof lng === 'number') {
+          return {
+            latitude: lat,
+            longitude: lng,
+            confidence: 'high',
+            provider: 'google',
+            formattedAddress: place.formatted_address || place.name,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[GeocodingService] Google Places TextSearch failed', e);
+    }
+    return null;
+  }
 
   /** Retorna o cacheKey canônico para um endereço */
   private static key(params: {
