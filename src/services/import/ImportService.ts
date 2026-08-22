@@ -1,7 +1,14 @@
 import * as XLSX from 'xlsx';
 import { pick, keepLocalCopy, types } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
-import type { DeliveryEntity } from '../../types/geo';
+import type { ColumnMappingConfig, DeliveryEntity } from '../../types/geo';
+import { buildAddressQuery } from '../../utils/columnMappingHeuristics';
+
+export interface ParsedSpreadsheet {
+  headers: string[];
+  rows: Record<string, unknown>[];
+  fileName: string;
+}
 
 interface CsvOptions {
   separator: ',' | ';';
@@ -72,7 +79,7 @@ function normalizeText(value: string): string {
  * - auto-detects columns and normalizes into DeliveryEntity rows
  */
 export class ImportService {
-  static async pickAndReadSpreadsheet(): Promise<Record<string, unknown>[]> {
+  static async pickAndParseSpreadsheet(): Promise<ParsedSpreadsheet | null> {
     try {
       const results = await pick({
         mode: 'import',
@@ -80,7 +87,7 @@ export class ImportService {
         type: [types.xlsx, types.xls, types.csv, types.plainText],
       });
 
-      if (!results || results.length === 0) return [];
+      if (!results || results.length === 0) return null;
       const file = results[0];
 
       // Copy to app cache so we can read the file reliably
@@ -95,19 +102,34 @@ export class ImportService {
 
       // keepLocalCopy returns a file:// URI; RNFS expects a plain path
       const localPath = local.localUri.replace(/^file:\/\//, '');
+      const fileName = file.name ?? 'planilha.xlsx';
+      const isCsv = fileName.toLowerCase().endsWith('.csv') || fileName.toLowerCase().endsWith('.txt');
 
-      const fileName = (file.name ?? '').toLowerCase();
-      if (fileName.endsWith('.csv') || fileName.endsWith('.txt')) {
-        return ImportService.readCsv(localPath);
-      }
-      return ImportService.readWorkbook(localPath);
+      const rows = isCsv
+        ? await ImportService.readCsv(localPath)
+        : await ImportService.readWorkbook(localPath);
+
+      if (rows.length === 0) return null;
+
+      const headers = Object.keys(rows[0]).filter((h) => h && String(h).trim().length > 0);
+
+      return {
+        headers,
+        rows,
+        fileName,
+      };
     } catch (err: unknown) {
       const e = err as { code?: string };
       if (e?.code === 'DOCUMENT_PICKER_CANCELED' || e?.code === 'OPERATION_CANCELED') {
-        return [];
+        return null;
       }
       throw err;
     }
+  }
+
+  static async pickAndReadSpreadsheet(): Promise<Record<string, unknown>[]> {
+    const parsed = await ImportService.pickAndParseSpreadsheet();
+    return parsed ? parsed.rows : [];
   }
 
   private static async readWorkbook(filePath: string): Promise<Record<string, unknown>[]> {
@@ -149,7 +171,8 @@ export class ImportService {
         const cleanKey = normalizeText(String(key)).toLowerCase();
         const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
 
-        if (cleanKey.includes('nome') || cleanKey.includes('cliente')) normalized.name = stringVal;
+        if (cleanKey.includes('nome') || cleanKey.includes('cliente') || cleanKey.includes('destinatario') || cleanKey.includes('razao'))
+          normalized.name = stringVal;
         else if (cleanKey.includes('endereco') || cleanKey.includes('rua') || cleanKey.includes('logradouro') || cleanKey.includes('destination adress') || cleanKey.includes('destination address'))
           normalized.address = stringVal;
         else if (cleanKey === 'numero' || cleanKey.includes('nº') || cleanKey.includes('num'))
@@ -158,24 +181,24 @@ export class ImportService {
         else if (cleanKey.includes('bairro') || cleanKey.includes('neighborhood')) normalized.neighborhood = stringVal;
         else if (cleanKey.includes('cidade') || cleanKey.includes('municipio') || cleanKey.includes('city')) normalized.city = stringVal;
         else if (cleanKey.includes('estado') || cleanKey === 'uf') normalized.state = stringVal;
-        else if (cleanKey.includes('cep') || cleanKey.includes('codigo postal') || cleanKey.includes('zipcode')) normalized.cep = stringVal;
-        else if (cleanKey.includes('telefone') || cleanKey.includes('celular') || cleanKey === 'tel')
+        else if (cleanKey.includes('cep') || cleanKey.includes('codigo postal') || cleanKey.includes('zipcode') || cleanKey.includes('zip')) normalized.cep = stringVal;
+        else if (cleanKey.includes('telefone') || cleanKey.includes('celular') || cleanKey === 'tel' || cleanKey.includes('phone') || cleanKey.includes('whatsapp'))
           normalized.phone = stringVal;
-        else if (cleanKey.includes('pedido') || cleanKey.includes('codigo da entrega') || cleanKey.includes('order'))
+        else if (cleanKey.includes('pedido') || cleanKey.includes('codigo da entrega') || cleanKey.includes('order') || cleanKey.includes('codigo'))
           normalized.orderCode = stringVal;
         else if (cleanKey.includes('sequence') || cleanKey.includes('sequencia')) {
           const num = parseInt(stringVal, 10);
           normalized.sequence = !isNaN(num) ? num : null;
         }
-        else if (cleanKey.includes('corridor cage')) {
-          normalized.notes = stringVal ? `Corridor cage: ${stringVal}` : '';
+        else if (cleanKey.includes('observacao') || cleanKey.includes('obs') || cleanKey.includes('nota') || cleanKey.includes('notes') || cleanKey.includes('corridor cage')) {
+          normalized.notes = stringVal;
         }
-        else if (cleanKey.includes('latitude') || cleanKey.includes('lat')) {
-          const num = parseFloat(stringVal.replace(',', '.'));
-          normalized.latitude = !isNaN(num) ? num : null;
-        } else if (cleanKey.includes('longitude') || cleanKey.includes('lon') || cleanKey.includes('lng')) {
-          const num = parseFloat(stringVal.replace(',', '.'));
-          normalized.longitude = !isNaN(num) ? num : null;
+        else if (cleanKey === 'latitude' || cleanKey === 'lat' || cleanKey.startsWith('lat_') || cleanKey.startsWith('latitude') || cleanKey.includes('latitude') || cleanKey === 'latitud') {
+          const num = parseFloat(stringVal.replace(',', '.').trim());
+          if (!isNaN(num) && num >= -90 && num <= 90) normalized.latitude = num;
+        } else if (cleanKey === 'longitude' || cleanKey === 'lon' || cleanKey === 'lng' || cleanKey === 'long' || cleanKey.startsWith('lng_') || cleanKey.startsWith('lon_') || cleanKey.startsWith('long_') || cleanKey.startsWith('longitude') || cleanKey.includes('longitude') || cleanKey === 'longitud') {
+          const num = parseFloat(stringVal.replace(',', '.').trim());
+          if (!isNaN(num) && num >= -180 && num <= 180) normalized.longitude = num;
         }
       }
 
@@ -208,6 +231,84 @@ export class ImportService {
         notes: (normalized.notes as string) || null,
         deliveredAt: null,
         createdAt: Date.now(),
+        originalData: JSON.stringify(row),
+      };
+    });
+  }
+
+  /**
+   * Converte as linhas brutas da planilha em DeliveryEntity usando o mapeamento configurado pelo usuário.
+   */
+  static applyMapping(
+    rows: Record<string, unknown>[],
+    mapping: ColumnMappingConfig,
+  ): Omit<DeliveryEntity, 'id'>[] {
+    return rows.map((row, index) => {
+      // Nome/Título: Usado APENAS como label/marcador no mapa
+      const name = mapping.nameCol && row[mapping.nameCol] !== undefined
+        ? String(row[mapping.nameCol] ?? '').trim()
+        : '';
+
+      // Endereço: Extraído EXCLUSIVAMENTE das colunas de endereço (nome NUNCA entra na URL de geocodificação)
+      const cleanAddressCols = (mapping.addressCols || []).filter(
+        (col) => col !== mapping.nameCol && col !== mapping.latitudeCol && col !== mapping.longitudeCol,
+      );
+      const addressQuery = buildAddressQuery(row, cleanAddressCols);
+
+      let lat: number | null = null;
+      let lng: number | null = null;
+
+      if (mapping.latitudeCol && row[mapping.latitudeCol] !== undefined && row[mapping.latitudeCol] !== null) {
+        const parsedLat = parseFloat(String(row[mapping.latitudeCol]).replace(',', '.').trim());
+        if (!isNaN(parsedLat) && parsedLat >= -90 && parsedLat <= 90) lat = parsedLat;
+      }
+
+      if (mapping.longitudeCol && row[mapping.longitudeCol] !== undefined && row[mapping.longitudeCol] !== null) {
+        const parsedLng = parseFloat(String(row[mapping.longitudeCol]).replace(',', '.').trim());
+        if (!isNaN(parsedLng) && parsedLng >= -180 && parsedLng <= 180) lng = parsedLng;
+      }
+
+      const phone = mapping.phoneCol && row[mapping.phoneCol] !== undefined
+        ? String(row[mapping.phoneCol] ?? '').trim()
+        : '';
+
+      const orderCode = mapping.orderCodeCol && row[mapping.orderCodeCol] !== undefined
+        ? String(row[mapping.orderCodeCol] ?? '').trim()
+        : '';
+
+      const notes = mapping.notesCol && row[mapping.notesCol] !== undefined
+        ? String(row[mapping.notesCol] ?? '').trim()
+        : null;
+
+      const hasCoords = lat !== null && lng !== null && (lat !== 0 || lng !== 0);
+
+      return {
+        name: name || `Entrega #${index + 1}`,
+        address: addressQuery,
+        number: '',
+        complement: '',
+        neighborhood: '',
+        city: '',
+        state: '',
+        cep: '',
+        phone,
+        orderCode,
+        latitude: hasCoords ? lat : null,
+        longitude: hasCoords ? lng : null,
+        snappedLatitude: null,
+        snappedLongitude: null,
+        geocodingStatus: hasCoords ? 'success' : 'pending',
+        geocodingSource: hasCoords ? 'spreadsheet' : null,
+        routingStatus: 'pending',
+        sequence: index + 1,
+        distance: null,
+        duration: null,
+        status: 'pending',
+        failReason: null,
+        notes: notes || null,
+        deliveredAt: null,
+        createdAt: Date.now(),
+        originalData: JSON.stringify(row),
       };
     });
   }

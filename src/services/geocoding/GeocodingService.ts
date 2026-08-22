@@ -1,27 +1,49 @@
 import type { DeliveryEntity, GeocodeResult } from '../../types/geo';
 import { DatabaseService } from '../../storage/DatabaseService';
 import {
-  buildGeocodingQuery,
+  buildGoogleGeocodingQuery,
   expandAbbreviations,
   stripComplementNoise,
   normalizeForSearch,
   extractCep,
 } from '../../utils/addressParser';
+import { GoogleQuotaManager, QuotaExceededError } from './GoogleQuotaManager';
+import { getGoogleMapsApiKey } from '../../config/env';
 
-const MAPTILER_API_KEY = 'gK1k9hgPpqK3yZo3UbrJ';
+interface GoogleGeocodeApiResponse {
+  results?: Array<{
+    formatted_address: string;
+    geometry: {
+      location: {
+        lat: number;
+        lng: number;
+      };
+      location_type: 'ROOFTOP' | 'RANGE_INTERPOLATED' | 'GEOMETRIC_CENTER' | 'APPROXIMATE';
+    };
+    types: string[];
+    place_id: string;
+  }>;
+  status:
+    | 'OK'
+    | 'ZERO_RESULTS'
+    | 'OVER_QUERY_LIMIT'
+    | 'REQUEST_DENIED'
+    | 'INVALID_REQUEST'
+    | 'UNKNOWN_ERROR';
+  error_message?: string;
+}
 
 /**
- * GeocodingService — Motor de Geocodificação em Cascata de Alta Precisão.
+ * GeocodingService — Motor de Geocodificação em Cascata com Google Geocoding API.
  *
- * Estratégia de Geocodificação (em ordem de precisão):
- *   0. Cache local SQLite (0ms, offline)
- *   1. Coordenadas exatas já presentes na planilha (se válidas)
- *   2. MapTiler Geocoding API — alta precisão com suporte a números prediais,
- *      resolução fonética e grafias brasileiras.
- *   3. Nominatim (OpenStreetMap) — busca estruturada e por texto livre
- *   4. Photon (Komoot) — busca tolerante a erros com foco Brasil
- *   5. ViaCEP — enriquece nomes de ruas oficiais para reconsulta
- *   6. BrasilAPI — fallback por centroide do CEP (apenas quando não há rua)
+ * Estratégia de Geocodificação:
+ *   0. Cache local SQLite / Memória (0ms, offline, economiza cota da API)
+ *   1. Coordenadas já preenchidas na planilha (se válidas)
+ *   2. Google Geocoding API — Alta precisão (ROOFTOP/RANGE_INTERPOLATED), controle de cota diária (300 req/dia)
+ *   3. Nominatim (OpenStreetMap) — Fallback gratuito estruturado
+ *   4. Photon (Komoot) — Fallback tolerante a erros
+ *   5. ViaCEP — Enriquece nome de rua oficial para nova consulta
+ *   6. BrasilAPI — Fallback final por centroide de CEP (quando não há rua)
  */
 export class GeocodingService {
   private static memCache = new Map<string, GeocodeResult>();
@@ -96,40 +118,76 @@ export class GeocodingService {
     return null;
   }
 
-  /** Passo 2: MapTiler Geocoding API (Alta precisão) */
-  private static async maptilerGeocode(query: string): Promise<GeocodeResult | null> {
+  /**
+   * Passo 2: Google Geocoding API (Alta precisão + controle de cota diária)
+   *
+   * Formato de chamada:
+   * https://maps.googleapis.com/maps/api/geocode/json?address=${query}&key=${API_KEY}
+   */
+  static async googleGeocode(query: string): Promise<GeocodeResult | null> {
     if (!query || query.trim().length === 0) return null;
+
+    // Incrementa e valida a cota diária local (máx 300 req/dia)
+    await GoogleQuotaManager.increment();
+
     try {
-      const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(query)}.json?key=${MAPTILER_API_KEY}&country=br&limit=1`;
+      const apiKey = getGoogleMapsApiKey();
+      const encodedQuery = encodeURIComponent(query);
+      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodedQuery}&region=br&language=pt-BR&key=${apiKey}`;
+
       const res = await fetch(url, {
-        headers: { 'User-Agent': 'RoutesDeliveryApp/2.0' },
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(8000),
       });
-      if (!res.ok) return null;
-      const data = await res.json() as {
-        features?: Array<{
-          center?: [number, number];
-          place_name?: string;
-          relevance?: number;
-          properties?: { kind?: string };
-        }>;
-      };
-      const feat = data.features?.[0];
-      if (!feat?.center || feat.center.length < 2) return null;
 
-      const [lon, lat] = feat.center;
-      if (isNaN(lat) || isNaN(lon)) return null;
+      if (!res.ok) {
+        console.warn(`[GeocodingService] Google Geocoding HTTP error ${res.status}`);
+        return null;
+      }
 
-      const relevance = feat.relevance ?? 0.5;
+      const data = (await res.json()) as GoogleGeocodeApiResponse;
+
+      if (data.status !== 'OK') {
+        console.warn(
+          `[GeocodingService] Google Geocoding response for query "${query}": status = "${data.status}", error_message = "${data.error_message || 'N/A'}". Full payload:`,
+          JSON.stringify(data),
+        );
+      }
+
+      if (data.status === 'ZERO_RESULTS') {
+        return null;
+      }
+
+      if (data.status === 'OVER_QUERY_LIMIT') {
+        throw new QuotaExceededError('Cota de requisições do Google Geocoding excedida na API.');
+      }
+
+      if (data.status !== 'OK' || !data.results || data.results.length === 0) {
+        return null;
+      }
+
+      const first = data.results[0];
+      const { lat, lng } = first.geometry.location;
+
+      if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
+        return null;
+      }
+
+      const locType = first.geometry.location_type;
+      const confidence: GeocodeResult['confidence'] =
+        locType === 'ROOFTOP' || locType === 'RANGE_INTERPOLATED' ? 'high' : locType === 'GEOMETRIC_CENTER' ? 'medium' : 'low';
+
       return {
         latitude: lat,
-        longitude: lon,
-        confidence: relevance >= 0.6 ? 'high' : 'medium',
-        provider: 'maptiler',
-        formattedAddress: feat.place_name,
+        longitude: lng,
+        confidence,
+        provider: 'google',
+        formattedAddress: first.formatted_address,
       };
-    } catch (e) {
-      console.warn('[GeocodingService] MapTiler failed', e);
+    } catch (e: unknown) {
+      if (e instanceof QuotaExceededError) {
+        throw e;
+      }
+      console.warn('[GeocodingService] Google Geocoding request failed', e);
       return null;
     }
   }
@@ -138,7 +196,7 @@ export class GeocodingService {
   private static async nominatimStructured(
     row: Pick<DeliveryEntity, 'address' | 'number' | 'neighborhood' | 'city' | 'state' | 'cep'>,
   ): Promise<GeocodeResult | null> {
-    const q = buildGeocodingQuery({
+    const q = buildGoogleGeocodingQuery({
       address: row.address,
       number: row.number,
       neighborhood: row.neighborhood,
@@ -161,8 +219,11 @@ export class GeocodingService {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as Array<{
-        lat: string; lon: string; type?: string; display_name?: string;
+      const data = (await res.json()) as Array<{
+        lat: string;
+        lon: string;
+        type?: string;
+        display_name?: string;
       }>;
       if (!data.length) return null;
       return {
@@ -192,7 +253,7 @@ export class GeocodingService {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         features?: Array<{
           geometry?: { coordinates?: [number, number] };
           properties?: { country?: string; name?: string; street?: string };
@@ -200,7 +261,11 @@ export class GeocodingService {
       };
       const feat = data.features?.[0];
       if (!feat?.geometry?.coordinates) return null;
-      if (feat.properties?.country && feat.properties.country !== 'Brasil' && feat.properties.country !== 'Brazil') {
+      if (
+        feat.properties?.country &&
+        feat.properties.country !== 'Brasil' &&
+        feat.properties.country !== 'Brazil'
+      ) {
         return null;
       }
       const [lon, lat] = feat.geometry.coordinates;
@@ -209,7 +274,13 @@ export class GeocodingService {
         longitude: lon,
         confidence: 'low',
         provider: 'photon',
-        formattedAddress: [feat.properties?.street || feat.properties?.name, city, 'Brasil'].filter(Boolean).join(', '),
+        formattedAddress: [
+          feat.properties?.street || feat.properties?.name,
+          city,
+          'Brasil',
+        ]
+          .filter(Boolean)
+          .join(', '),
       };
     } catch (e) {
       console.warn('[GeocodingService] Photon failed', e);
@@ -217,7 +288,7 @@ export class GeocodingService {
     }
   }
 
-  /** Passo 5: Enriquecimento via ViaCEP + Reconsulta no MapTiler/Nominatim */
+  /** Passo 5: Enriquecimento via ViaCEP + Reconsulta no Google/Nominatim */
   private static async viaCepEnrichAndGeocode(
     cep: string,
     houseNumber?: string,
@@ -230,7 +301,7 @@ export class GeocodingService {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         erro?: boolean;
         logradouro?: string;
         complemento?: string;
@@ -249,18 +320,28 @@ export class GeocodingService {
         data.localidade,
         data.uf,
         data.cep,
-      ].filter(Boolean).join(', ');
+      ]
+        .filter(Boolean)
+        .join(', ');
 
-      // Tenta MapTiler primeiro com os dados do ViaCEP
-      const maptilerRes = await GeocodingService.maptilerGeocode(query);
-      if (maptilerRes) {
-        return { ...maptilerRes, provider: 'viacep+nominatim' };
+      // Tenta Google Geocoding primeiro com os dados oficiais do ViaCEP
+      try {
+        const googleRes = await GeocodingService.googleGeocode(query);
+        if (googleRes) {
+          return { ...googleRes, provider: 'viacep+nominatim' };
+        }
+      } catch (e) {
+        if (e instanceof QuotaExceededError) throw e;
       }
 
       // Tenta Nominatim
-      const nomRes = await GeocodingService.nominatimQuery(encodeURIComponent(query), 'viacep+nominatim');
+      const nomRes = await GeocodingService.nominatimQuery(
+        encodeURIComponent(query),
+        'viacep+nominatim',
+      );
       if (nomRes) return nomRes;
     } catch (e) {
+      if (e instanceof QuotaExceededError) throw e;
       console.warn('[GeocodingService] ViaCEP failed', e);
     }
     return null;
@@ -276,7 +357,7 @@ export class GeocodingService {
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) return null;
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         latitude?: number | string | null;
         longitude?: number | string | null;
         street?: string;
@@ -292,7 +373,9 @@ export class GeocodingService {
           longitude: lon,
           confidence: 'low',
           provider: 'brasilapi',
-          formattedAddress: [data.street, data.neighborhood, data.city, data.state].filter(Boolean).join(', '),
+          formattedAddress: [data.street, data.neighborhood, data.city, data.state]
+            .filter(Boolean)
+            .join(', '),
         };
       }
     } catch (e) {
@@ -302,29 +385,20 @@ export class GeocodingService {
   }
 
   /**
-   * Geocodifica uma entrega usando a cascata completa de alta precisão.
+   * Geocodifica uma entrega usando a cascata completa com Google Geocoding.
    */
   static async geocodeDelivery(
     row: Pick<DeliveryEntity, 'address' | 'number' | 'neighborhood' | 'city' | 'state' | 'cep'>,
   ): Promise<GeocodeResult | null> {
-    const cacheKey = GeocodingService.key({
-      address: row.address,
-      number: row.number,
-      city: row.city,
-      cep: row.cep,
-    });
-
-    // 0. Cache SQLite
-    const cached = GeocodingService.checkCache(cacheKey);
-    if (cached) return cached;
-
-    const cleanCep = row.cep ? extractCep(row.cep.replace(/\D/g, '').padStart(8, '0').slice(0, 8)) : null;
+    const cleanCep = row.cep
+      ? extractCep(row.cep.replace(/\D/g, '').padStart(8, '0').slice(0, 8))
+      : null;
     const hasStreet = row.address && row.address.trim().length > 2;
 
     let result: GeocodeResult | null = null;
 
-    // 1. Constrói query otimizada
-    const primaryQuery = buildGeocodingQuery({
+    // 1. Constrói query otimizada no formato hierárquico
+    const primaryQuery = buildGoogleGeocodingQuery({
       address: row.address,
       number: row.number,
       neighborhood: row.neighborhood,
@@ -333,12 +407,18 @@ export class GeocodingService {
       cep: cleanCep ?? undefined,
     });
 
-    // 2. MapTiler Geocoding (Melhor precisão para Brasil)
+    // 2. Google Geocoding API (Melhor precisão para Brasil)
     if (primaryQuery) {
-      result = await GeocodingService.maptilerGeocode(primaryQuery);
+      try {
+        result = await GeocodingService.googleGeocode(primaryQuery);
+      } catch (e) {
+        if (e instanceof QuotaExceededError) {
+          throw e; // Repassa para o fluxo de importação tratar o limite diário
+        }
+      }
     }
 
-    // 3. Nominatim Estruturado
+    // 3. Nominatim Estruturado (Fallback)
     if (!result || result.confidence === 'low') {
       const nomRes = await GeocodingService.nominatimStructured(row);
       if (nomRes && (!result || nomRes.confidence === 'high')) {
@@ -362,25 +442,27 @@ export class GeocodingService {
       result = await GeocodingService.viaApiCep(cleanCep);
     }
 
-    if (result) {
-      GeocodingService.saveCache(cacheKey, result);
-    }
-
     return result;
   }
 
   /** Geocodifica uma query de texto livre (para barra de busca) */
   static async geocodeQuery(query: string): Promise<GeocodeResult | null> {
-    const cacheKey = `query|${normalizeForSearch(query).toLowerCase()}`;
-    const cached = GeocodingService.checkCache(cacheKey);
-    if (cached) return cached;
-
-    // 1. Tenta MapTiler
-    let result = await GeocodingService.maptilerGeocode(query);
+    // 1. Tenta Google Geocoding
+    let result: GeocodeResult | null = null;
+    try {
+      result = await GeocodingService.googleGeocode(query);
+    } catch (e) {
+      if (e instanceof QuotaExceededError) {
+        console.warn('[GeocodingService] Quota exceeded on geocodeQuery');
+      }
+    }
 
     // 2. Tenta Nominatim
     if (!result) {
-      result = await GeocodingService.nominatimQuery(encodeURIComponent(query + ', Brasil'), 'nominatim');
+      result = await GeocodingService.nominatimQuery(
+        encodeURIComponent(query + ', Brasil'),
+        'nominatim',
+      );
     }
 
     // 3. Fallback Photon
@@ -388,7 +470,6 @@ export class GeocodingService {
       result = await GeocodingService.photon(query);
     }
 
-    if (result) GeocodingService.saveCache(cacheKey, result);
     return result;
   }
 
@@ -398,7 +479,14 @@ export class GeocodingService {
     city = 'Maricá',
     state = 'RJ',
   ): Promise<GeocodeResult | null> {
-    return GeocodingService.geocodeDelivery({ address, number: '', neighborhood: '', city, state, cep: '' });
+    return GeocodingService.geocodeDelivery({
+      address,
+      number: '',
+      neighborhood: '',
+      city,
+      state,
+      cep: '',
+    });
   }
 
   static clearCache(): void {

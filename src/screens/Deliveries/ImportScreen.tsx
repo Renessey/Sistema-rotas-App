@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,14 @@ import {
   StyleSheet,
   ScrollView,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import { ImportService } from '../../services/import/ImportService';
 import { ValidationService } from '../../services/validation/ValidationService';
 import { GeocodingService } from '../../services/geocoding/GeocodingService';
+import { GoogleQuotaManager, QuotaExceededError } from '../../services/geocoding/GoogleQuotaManager';
 import { ValhallaService } from '../../services/routing/ValhallaService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { colors, spacing, radius, shadows, typography } from '../../theme';
@@ -31,13 +33,62 @@ export default function ImportScreen({ navigation }: Props) {
   const [message, setMessage] = useState('');
   const [geoLogs, setGeoLogs] = useState<GeoLog[]>([]);
   const [summary, setSummary] = useState<{
-    total: number; valid: number; withoutAddress: number;
-    withoutCep: number; duplicates: number; emptyRows: number; geocoded: number; failed: number;
+    total: number;
+    valid: number;
+    withoutAddress: number;
+    withoutCep: number;
+    duplicates: number;
+    emptyRows: number;
+    geocoded: number;
+    failed: number;
   } | null>(null);
   const [geocodeProgress, setGeocodeProgress] = useState(0);
   const [geocodeTotal, setGeocodeTotal] = useState(0);
+  const [quotaInfo, setQuotaInfo] = useState<{
+    count: number;
+    limit: number;
+    remaining: number;
+  }>({ count: 0, limit: 300, remaining: 300 });
+
+  const refreshQuota = useCallback(async () => {
+    try {
+      const usage = await GoogleQuotaManager.getUsage();
+      setQuotaInfo({
+        count: usage.count,
+        limit: usage.limit,
+        remaining: usage.remaining,
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshQuota();
+  }, [refreshQuota]);
 
   const isBusy = phase === 'reading' || phase === 'validating' || phase === 'geocoding';
+
+  const formatProviderName = (provider: string): string => {
+    switch (provider) {
+      case 'google':
+        return 'Google Geocoding';
+      case 'spreadsheet':
+        return 'Planilha';
+      case 'cache':
+        return 'Cache Local';
+      case 'viacep+nominatim':
+        return 'ViaCEP + Google';
+      case 'nominatim':
+        return 'OpenStreetMap';
+      case 'photon':
+        return 'Photon';
+      case 'brasilapi':
+        return 'BrasilAPI';
+      default:
+        return provider;
+    }
+  };
 
   const handleImport = async () => {
     try {
@@ -66,42 +117,106 @@ export default function ImportScreen({ navigation }: Props) {
       setGeocodeProgress(0);
 
       const logs: GeoLog[] = [];
-      let geocodedCount = 0;
+      let quotaExceeded = false;
 
       if (toGeocode.length > 0) {
         setPhase('geocoding');
 
         for (let i = 0; i < toGeocode.length; i++) {
           const delivery = toGeocode[i];
-          setMessage(`Geocodificando… ${i + 1}/${toGeocode.length}`);
+          setMessage(`Geocodificando com Google (${i + 1}/${toGeocode.length})…`);
 
-          // First try from row (spreadsheet coords)
+          // 1. Tenta coordenadas já existentes na linha da planilha
           const fromRow = GeocodingService.resolveFromRow(delivery);
           if (fromRow) {
             delivery.latitude = fromRow.latitude;
             delivery.longitude = fromRow.longitude;
             delivery.geocodingStatus = 'success';
             delivery.geocodingSource = fromRow.provider;
-            geocodedCount++;
-            logs.push({ name: delivery.name, provider: 'planilha', success: true });
+            logs.push({
+              name: delivery.name,
+              provider: formatProviderName(fromRow.provider),
+              success: true,
+            });
           } else {
-            const geo = await GeocodingService.geocodeDelivery(delivery);
-            if (geo) {
-              delivery.latitude = geo.latitude;
-              delivery.longitude = geo.longitude;
-              delivery.geocodingStatus = 'success';
-              delivery.geocodingSource = geo.provider;
-              geocodedCount++;
-              logs.push({ name: delivery.name, provider: geo.provider, success: true });
-            } else {
-              delivery.geocodingStatus = 'failed';
-              logs.push({ name: delivery.name, provider: '—', success: false });
+            // 2. Verifica cota antes de chamar a API
+            const hasQuota = await GoogleQuotaManager.hasQuotaAvailable();
+            if (!hasQuota) {
+              quotaExceeded = true;
+              delivery.geocodingStatus = 'pending';
+              logs.push({
+                name: delivery.name,
+                provider: 'Cota diária atingida (300/300)',
+                success: false,
+              });
+
+              // Marca os registros subsequentes como pendentes para resolução manual
+              for (let j = i + 1; j < toGeocode.length; j++) {
+                toGeocode[j].geocodingStatus = 'pending';
+              }
+              break;
+            }
+
+            try {
+              console.log(
+                `[ImportScreen] Geocoding #${i + 1} (Título: "${delivery.name}") → Query de Endereço: "${delivery.address}"`,
+              );
+              const geo = await GeocodingService.geocodeDelivery(delivery);
+              if (geo) {
+                delivery.latitude = geo.latitude;
+                delivery.longitude = geo.longitude;
+                delivery.geocodingStatus = 'success';
+                delivery.geocodingSource = geo.provider;
+                logs.push({
+                  name: delivery.name,
+                  provider: formatProviderName(geo.provider),
+                  success: true,
+                });
+              } else {
+                // ZERO_RESULTS: marca como pendente para revisão manual sem quebrar
+                delivery.geocodingStatus = 'failed';
+                logs.push({
+                  name: delivery.name,
+                  provider: 'Google (Sem resultados)',
+                  success: false,
+                });
+              }
+            } catch (err: unknown) {
+              if (err instanceof QuotaExceededError) {
+                quotaExceeded = true;
+                delivery.geocodingStatus = 'pending';
+                logs.push({
+                  name: delivery.name,
+                  provider: 'Limite de 300 req atingido',
+                  success: false,
+                });
+                for (let j = i + 1; j < toGeocode.length; j++) {
+                  toGeocode[j].geocodingStatus = 'pending';
+                }
+                break;
+              } else {
+                delivery.geocodingStatus = 'failed';
+                logs.push({
+                  name: delivery.name,
+                  provider: 'Falha na consulta',
+                  success: false,
+                });
+              }
+            }
+
+            // Throttling: intervalo de 200ms entre cada requisição sequencial
+            if (i < toGeocode.length - 1) {
+              await new Promise<void>((resolve) => setTimeout(() => resolve(), 200));
             }
           }
 
+          // Snapping no Valhalla se tiver coordenadas
           if (delivery.latitude !== null && delivery.longitude !== null) {
             try {
-              const snap = await ValhallaService.locate([delivery.longitude, delivery.latitude], { radius: 100 });
+              const snap = await ValhallaService.locate(
+                [delivery.longitude, delivery.latitude],
+                { radius: 100 },
+              );
               if (snap.matched && snap.snapped) {
                 delivery.snappedLongitude = snap.snapped[0];
                 delivery.snappedLatitude = snap.snapped[1];
@@ -120,7 +235,7 @@ export default function ImportScreen({ navigation }: Props) {
         }
       }
 
-      // Persist ALL valid records (including those that failed geocoding — for manual resolution)
+      // Persiste todas as entregas válidas (incluindo as pendentes/sem localização)
       DatabaseService.clearDeliveries();
       result.valid.forEach((d) => DatabaseService.insertDelivery(d));
 
@@ -139,9 +254,21 @@ export default function ImportScreen({ navigation }: Props) {
         failed: result.valid.length - geocodedFinal,
       });
 
+      await refreshQuota();
+
+      if (quotaExceeded) {
+        Alert.alert(
+          'Limite Diário Atingido',
+          'O limite diário de 300 consultas do Google Geocoding foi atingido para hoje. As entregas restantes foram salvas para revisão manual.',
+          [{ text: 'Entendido' }],
+        );
+      }
+
       setPhase('done');
       setMessage(
-        `${result.valid.length} entregas importadas — ${geocodedFinal} com localização, ${result.valid.length - geocodedFinal} para resolver manualmente.`,
+        `${result.valid.length} entregas importadas — ${geocodedFinal} com localização Google, ${
+          result.valid.length - geocodedFinal
+        } para resolver manualmente.`,
       );
     } catch (error) {
       console.error('[ImportScreen]', error);
@@ -165,7 +292,46 @@ export default function ImportScreen({ navigation }: Props) {
         <Text style={styles.heroSub}>
           Selecione uma planilha <Text style={styles.bold}>.xlsx</Text>,{' '}
           <Text style={styles.bold}>.csv</Text> ou <Text style={styles.bold}>.txt</Text>.{'\n'}
-          As colunas são detectadas automaticamente.
+          Geocodificação de alta precisão via <Text style={styles.bold}>Google Maps API</Text>.
+        </Text>
+      </View>
+
+      {/* Quota indicator */}
+      <View style={styles.quotaCard}>
+        <View style={styles.quotaHeader}>
+          <Text style={styles.quotaTitle}>⚡ Cota Diária Google Geocoding</Text>
+          <View
+            style={[
+              styles.quotaBadge,
+              {
+                backgroundColor:
+                  quotaInfo.remaining > 50
+                    ? colors.successGhost
+                    : quotaInfo.remaining > 0
+                    ? colors.warningGhost
+                    : colors.dangerGhost,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.quotaBadgeText,
+                {
+                  color:
+                    quotaInfo.remaining > 50
+                      ? colors.success
+                      : quotaInfo.remaining > 0
+                      ? colors.warning
+                      : colors.danger,
+                },
+              ]}
+            >
+              {quotaInfo.count} / {quotaInfo.limit} usadas hoje
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.quotaSub}>
+          Limite de 300 consultas/dia com intervalo de 200ms por requisição para controle de taxa e custo.
         </Text>
       </View>
 
@@ -201,7 +367,7 @@ export default function ImportScreen({ navigation }: Props) {
             <Text style={styles.importBtnText}>Processando…</Text>
           </View>
         ) : (
-          <Text style={styles.importBtnText}>📄 Selecionar Arquivo</Text>
+          <Text style={styles.importBtnText}>📄 Selecionar Arquivo (.xlsx / .csv)</Text>
         )}
       </Pressable>
 
@@ -209,13 +375,17 @@ export default function ImportScreen({ navigation }: Props) {
       {phase === 'geocoding' && (
         <View style={styles.progressCard}>
           <View style={styles.progressHeader}>
-            <Text style={styles.progressLabel}>Geocodificando endereços</Text>
+            <Text style={styles.progressLabel}>Geocodificando com Google Maps</Text>
             <Text style={styles.progressPct}>{Math.round(progressPct * 100)}%</Text>
           </View>
           <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progressPct * 100}%` as any }]} />
+            <View
+              style={[styles.progressFill, { width: `${progressPct * 100}%` as any }]}
+            />
           </View>
-          <Text style={styles.progressSub}>{geocodeProgress} de {geocodeTotal} endereços</Text>
+          <Text style={styles.progressSub}>
+            {geocodeProgress} de {geocodeTotal} endereços
+          </Text>
           <Text style={styles.progressMsg}>{message}</Text>
         </View>
       )}
@@ -223,29 +393,62 @@ export default function ImportScreen({ navigation }: Props) {
       {/* Geocoding log */}
       {geoLogs.length > 0 && (
         <View style={styles.logCard}>
-          <Text style={styles.logTitle}>Log de Geocodificação</Text>
+          <Text style={styles.logTitle}>Log de Geocodificação (Google)</Text>
           {geoLogs.slice(-10).map((log, i) => (
             <View key={i} style={styles.logRow}>
-              <Text style={[styles.logIcon, { color: log.success ? colors.success : colors.danger }]}>
+              <Text
+                style={[
+                  styles.logIcon,
+                  { color: log.success ? colors.success : colors.danger },
+                ]}
+              >
                 {log.success ? '✅' : '❌'}
               </Text>
-              <Text style={styles.logName} numberOfLines={1}>{log.name}</Text>
-              {log.success && (
-                <View style={[styles.providerBadge]}>
-                  <Text style={styles.providerText}>{log.provider}</Text>
-                </View>
-              )}
+              <Text style={styles.logName} numberOfLines={1}>
+                {log.name}
+              </Text>
+              <View
+                style={[
+                  styles.providerBadge,
+                  {
+                    backgroundColor: log.success
+                      ? colors.primaryGhost
+                      : colors.warningGhost,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.providerText,
+                    {
+                      color: log.success ? colors.primary : colors.warning,
+                    },
+                  ]}
+                >
+                  {log.provider}
+                </Text>
+              </View>
             </View>
           ))}
           {geoLogs.length > 10 && (
-            <Text style={styles.logMore}>… e mais {geoLogs.length - 10} registros</Text>
+            <Text style={styles.logMore}>
+              … e mais {geoLogs.length - 10} registros
+            </Text>
           )}
         </View>
       )}
 
       {/* Status messages */}
       {phase === 'error' && (
-        <View style={[styles.msgCard, { borderColor: colors.danger + '44', backgroundColor: colors.dangerGhost }]}>
+        <View
+          style={[
+            styles.msgCard,
+            {
+              borderColor: colors.danger + '44',
+              backgroundColor: colors.dangerGhost,
+            },
+          ]}
+        >
           <Text style={styles.msgIcon}>❌</Text>
           <Text style={[styles.msgText, { color: colors.danger }]}>{message}</Text>
         </View>
@@ -255,14 +458,46 @@ export default function ImportScreen({ navigation }: Props) {
       {summary && (
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>Resumo da Importação</Text>
-          <SummaryRow label="Total de linhas"   value={summary.total}          color={colors.primary} />
-          <SummaryRow label="Válidas"            value={summary.valid}          color={colors.success} />
-          <SummaryRow label="Com localização"   value={summary.geocoded}       color={colors.success} />
-          <SummaryRow label="Para resolver"     value={summary.failed}         color={summary.failed > 0 ? colors.warning : colors.textMuted} />
-          <SummaryRow label="Sem endereço"      value={summary.withoutAddress} color={colors.danger} />
-          <SummaryRow label="Sem CEP"           value={summary.withoutCep}     color={colors.warning} />
-          <SummaryRow label="Duplicados"        value={summary.duplicates}     color={colors.warning} />
-          <SummaryRow label="Linhas vazias"     value={summary.emptyRows}      color={colors.textMuted} />
+          <SummaryRow
+            label="Total de linhas"
+            value={summary.total}
+            color={colors.primary}
+          />
+          <SummaryRow
+            label="Válidas"
+            value={summary.valid}
+            color={colors.success}
+          />
+          <SummaryRow
+            label="Com localização"
+            value={summary.geocoded}
+            color={colors.success}
+          />
+          <SummaryRow
+            label="Para resolver"
+            value={summary.failed}
+            color={summary.failed > 0 ? colors.warning : colors.textMuted}
+          />
+          <SummaryRow
+            label="Sem endereço"
+            value={summary.withoutAddress}
+            color={colors.danger}
+          />
+          <SummaryRow
+            label="Sem CEP"
+            value={summary.withoutCep}
+            color={colors.warning}
+          />
+          <SummaryRow
+            label="Duplicados"
+            value={summary.duplicates}
+            color={colors.warning}
+          />
+          <SummaryRow
+            label="Linhas vazias"
+            value={summary.emptyRows}
+            color={colors.textMuted}
+          />
         </View>
       )}
 
@@ -291,7 +526,15 @@ export default function ImportScreen({ navigation }: Props) {
   );
 }
 
-function SummaryRow({ label, value, color }: { label: string; value: number; color: string }) {
+function SummaryRow({
+  label,
+  value,
+  color,
+}: {
+  label: string;
+  value: number;
+  color: string;
+}) {
   return (
     <View style={summaryStyles.row}>
       <Text style={summaryStyles.label}>{label}</Text>
@@ -312,16 +555,51 @@ const styles = StyleSheet.create({
   heroSub: { ...typography.body, color: colors.textMuted, textAlign: 'center', lineHeight: 22 },
   bold: { fontWeight: '700', color: colors.text },
 
+  quotaCard: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.xs,
+    ...shadows.sm,
+  },
+  quotaHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  quotaTitle: {
+    ...typography.bodySmall,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  quotaBadge: {
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  quotaBadgeText: {
+    ...typography.caption,
+    fontWeight: '700',
+  },
+  quotaSub: {
+    ...typography.caption,
+    color: colors.textMuted,
+    lineHeight: 16,
+  },
+
   infoCard: {
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: spacing.sm,
+    gap: spacing.xs,
     ...shadows.sm,
   },
-  infoTitle: { ...typography.bodySmall, color: colors.textMuted, fontWeight: '600' },
+  infoTitle: { ...typography.bodySmall, color: colors.primary, fontWeight: '700' },
+  infoSubtext: { ...typography.caption, color: colors.textSecondary, lineHeight: 17 },
   colList: { gap: spacing.xs },
   colRow: { flexDirection: 'row', gap: spacing.xs },
   colChip: {
@@ -376,12 +654,11 @@ const styles = StyleSheet.create({
   logIcon: { fontSize: 13, width: 20 },
   logName: { ...typography.bodySmall, color: colors.text, flex: 1 },
   providerBadge: {
-    backgroundColor: colors.primaryGhost,
     borderRadius: radius.full,
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  providerText: { ...typography.caption, color: colors.primary, fontWeight: '600' },
+  providerText: { ...typography.caption, fontWeight: '600' },
   logMore: { ...typography.caption, color: colors.textMuted, textAlign: 'center', marginTop: spacing.xs },
 
   msgCard: {

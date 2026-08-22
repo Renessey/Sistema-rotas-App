@@ -111,6 +111,71 @@ export function stateNameFromUf(uf: string): string {
 }
 
 /**
+ * Sanitiza o endereço removendo nomes de fantasia, marcas e ruídos de estabelecimentos comerciais.
+ */
+export function sanitizeAddress(address: string): string {
+  if (!address) return '';
+  let result = address.trim();
+
+  // 1. Expande abreviações primeiro (ex: "R." -> "Rua ", "Av." -> "Avenida ")
+  result = expandAbbreviations(result);
+
+  // 2. Remove prefixos de estabelecimentos/fantasia separados por traço, dois pontos ou vírgula antes do tipo de logradouro
+  // Ex: "Padaria Estrela - Rua Dom Pedro II", "Comércio Silva - Avenida Brasil", "Loja 10: Rua X"
+  result = result.replace(/^.+?\s*[-–—:]\s*(?=(?:Rua|Avenida|Travessa|Estrada|Rodovia|Alameda|Praça|Parque|Largo|Beco|Vila|Servidão|Passarela|Passagem|Loteamento|Condomínio|Quadra|Setor|Doutor|Professor|Senador|Deputado)\b)/iu, '');
+
+  // 3. Remove prefixos de tipos de comércio comuns mesmo sem tipo de logradouro explícito
+  const commercialPrefixes = /^(?:Comércio|Comercio|Mercado|Supermercado|Padaria|Farmácia|Farmacia|Drogaria|Loja|Posto|Bar|Restaurante|Oficina|Academia|Igreja|Escola|Colégio|Colegio|Açougue|Acougue|Pizzaria|Lanchonete|Depósito|Deposito|Bazar|Armazém|Armazem)\s+[^,-–—:]+[-–—:,]\s*/iu;
+  result = result.replace(commercialPrefixes, '');
+
+  // 4. Remove ruídos de complemento (Apto, Bloco, Sala, etc.)
+  result = stripComplementNoise(result);
+
+  return result.trim();
+}
+
+/**
+ * Monta a query para o Google Geocoding API no formato hierárquico:
+ * `${rua}, ${numero} - ${bairro}, ${cidade} - ${uf}, ${cep}`
+ */
+export function buildGoogleGeocodingQuery(params: {
+  address: string;
+  number?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  cep?: string;
+}): string {
+  const street = sanitizeAddress(params.address);
+  const rawNumber = (params.number ?? '').trim();
+  const number = rawNumber && !rawNumber.match(/^(?:s\/n|sem\s+n(?:[úu]mero)?|0)$/i) ? rawNumber : '';
+  const neighborhood = (params.neighborhood ?? '').trim();
+  const city = (params.city ?? '').trim();
+  const rawState = (params.state ?? '').trim().toUpperCase();
+  const state = rawState.length === 2 ? rawState : (STATE_MAP[rawState] ? rawState : (Object.keys(STATE_MAP).find(k => STATE_MAP[k].toUpperCase() === rawState) ?? rawState));
+  const cleanCep = params.cep ? extractCep(params.cep) || params.cep.replace(/\D/g, '') : '';
+
+  // Formatação hierárquica: ${rua}, ${numero} - ${bairro}, ${cidade} - ${uf}, ${cep}
+  const streetWithNumber = number ? `${street}, ${number}` : street;
+  
+  let result = streetWithNumber;
+  if (neighborhood) {
+    result = result ? `${result} - ${neighborhood}` : neighborhood;
+  }
+  
+  if (city || state) {
+    const cityState = [city, state].filter(Boolean).join(' - ');
+    result = result ? `${result}, ${cityState}` : cityState;
+  }
+
+  if (cleanCep) {
+    result = result ? `${result}, ${cleanCep}` : cleanCep;
+  }
+
+  return result;
+}
+
+/**
  * Constrói a query de endereço mais limpa possível para geocodificação.
  * Expande abreviações e remove ruídos de complemento.
  */
@@ -122,21 +187,7 @@ export function buildGeocodingQuery(params: {
   state?: string;
   cep?: string;
 }): string {
-  const street = stripComplementNoise(expandAbbreviations(params.address));
-  const number = params.number && !params.number.match(/s\/n/i) ? params.number : '';
-  const neighborhood = params.neighborhood ?? '';
-  const city = params.city ?? '';
-  const state = params.state ? (STATE_MAP[params.state.toUpperCase()] ?? params.state) : '';
-
-  const parts = [
-    number ? `${street}, ${number}` : street,
-    neighborhood,
-    city,
-    state,
-    'Brasil',
-  ].filter(Boolean);
-
-  return parts.join(', ');
+  return buildGoogleGeocodingQuery(params);
 }
 
 /**

@@ -67,6 +67,7 @@ export class DatabaseService {
     addColumnIfMissing('deliveries', 'notes', 'TEXT');
     addColumnIfMissing('deliveries', 'deliveredAt', 'INTEGER');
     addColumnIfMissing('deliveries', 'createdAt', 'INTEGER');
+    addColumnIfMissing('deliveries', 'originalData', 'TEXT');
   }
 
   static getDb(): DB {
@@ -80,8 +81,8 @@ export class DatabaseService {
       `INSERT INTO deliveries (
         name, address, number, complement, neighborhood, city, state, cep, phone, orderCode,
         latitude, longitude, snappedLatitude, snappedLongitude, geocodingStatus, geocodingSource,
-        routingStatus, sequence, distance, duration, status, failReason, notes, deliveredAt, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        routingStatus, sequence, distance, duration, status, failReason, notes, deliveredAt, createdAt, originalData
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
       [
         delivery.name ?? null,
         delivery.address ?? null,
@@ -108,6 +109,7 @@ export class DatabaseService {
         delivery.notes ?? null,
         delivery.deliveredAt ?? null,
         delivery.createdAt ?? Date.now(),
+        delivery.originalData ?? null,
       ],
     );
     return result.insertId ?? 0;
@@ -154,21 +156,20 @@ export class DatabaseService {
     extra?: { failReason?: FailReason; notes?: string; deliveredAt?: number },
   ): void {
     const db = this.getDb();
-    db.executeSync(
-      `UPDATE deliveries SET
-        status = ?,
-        failReason = COALESCE(?, failReason),
-        notes = COALESCE(?, notes),
-        deliveredAt = COALESCE(?, deliveredAt)
-      WHERE id = ?;`,
-      [
-        status,
-        extra?.failReason ?? null,
-        extra?.notes ?? null,
-        extra?.deliveredAt ?? (status === 'completed' ? Date.now() : null),
-        id,
-      ],
-    );
+    const deliveredAt = status === 'completed' ? (extra?.deliveredAt ?? Date.now()) : null;
+    const failReason = status === 'failed' ? (extra?.failReason ?? null) : null;
+
+    if (extra?.notes !== undefined) {
+      db.executeSync(
+        `UPDATE deliveries SET status = ?, failReason = ?, notes = ?, deliveredAt = ? WHERE id = ?;`,
+        [status, failReason, extra.notes, deliveredAt, id],
+      );
+    } else {
+      db.executeSync(
+        `UPDATE deliveries SET status = ?, failReason = ?, deliveredAt = ? WHERE id = ?;`,
+        [status, failReason, deliveredAt, id],
+      );
+    }
   }
 
   static updateDeliveryCoords(
@@ -209,6 +210,11 @@ export class DatabaseService {
   static clearDeliveries(): void {
     const db = this.getDb();
     db.executeSync('DELETE FROM deliveries;');
+    try {
+      db.executeSync('DELETE FROM geocoding_cache;');
+    } catch {
+      // ignore
+    }
   }
 
   /* ----- Geocoding Cache ----- */

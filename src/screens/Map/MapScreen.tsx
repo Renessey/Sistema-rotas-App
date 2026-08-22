@@ -338,18 +338,27 @@ export default function MapScreen({ navigation }: Props) {
 
   const completeStop = useCallback(() => {
     if (!activeStop) return;
-    DatabaseService.updateDeliveryStatus(activeStop.id, 'completed', { deliveredAt: Date.now() });
-    setCompletedIds((prev) => new Set(prev).add(activeStop.id));
+    const stopId = activeStop.id;
+    DatabaseService.updateDeliveryStatus(stopId, 'completed', { deliveredAt: Date.now() });
+    setDeliveries((prev) =>
+      prev.map((d) => (d.id === stopId ? { ...d, status: 'completed', deliveredAt: Date.now() } : d)),
+    );
+    setCompletedIds((prev) => new Set(prev).add(stopId));
     setActiveStop(null);
     if (navigationActive) recalculateRoute();
   }, [activeStop, navigationActive, recalculateRoute]);
 
   const skipStop = useCallback((reason: FailReason = 'absent') => {
     if (!activeStop) return;
-    DatabaseService.updateDeliveryStatus(activeStop.id, 'failed', { failReason: reason });
-    setCompletedIds((prev) => new Set(prev).add(activeStop.id));
+    const stopId = activeStop.id;
+    DatabaseService.updateDeliveryStatus(stopId, 'failed', { failReason: reason });
+    setDeliveries((prev) =>
+      prev.map((d) => (d.id === stopId ? { ...d, status: 'failed', failReason: reason } : d)),
+    );
+    setCompletedIds((prev) => new Set(prev).add(stopId));
     setActiveStop(null);
-  }, [activeStop]);
+    if (navigationActive) recalculateRoute();
+  }, [activeStop, navigationActive, recalculateRoute]);
 
   const handleManualDrag = useCallback(
     (delivery: DeliveryEntity, lngLat: LngLat) => {
@@ -659,6 +668,7 @@ export default function MapScreen({ navigation }: Props) {
           {activeStop.cep ? <Text style={styles.panelMeta}>📮 CEP {activeStop.cep}</Text> : null}
           {activeStop.orderCode ? <Text style={styles.panelMeta}>📋 Pedido: {activeStop.orderCode}</Text> : null}
           {activeStop.phone ? <Text style={styles.panelMeta}>📞 {activeStop.phone}</Text> : null}
+          {activeStop.notes ? <Text style={styles.panelMeta}>💬 {activeStop.notes}</Text> : null}
 
           <Text style={styles.panelDist}>
             📏 {formatDistance(activeStopDistance)} · ⏱ {formatDuration(estimateDurationMeters(activeStopDistance))}

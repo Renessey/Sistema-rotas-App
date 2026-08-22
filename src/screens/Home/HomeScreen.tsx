@@ -19,8 +19,11 @@ import {
   ScrollView,
   Animated,
   Dimensions,
+  Alert,
+  Modal,
   type ViewStyle,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
@@ -100,6 +103,12 @@ export default function HomeScreen({ navigation }: Props) {
     ]).start();
   }, [refreshStats, checkLocation, checkConnectivity, fadeAnim, slideAnim]);
 
+  useFocusEffect(
+    useCallback(() => {
+      refreshStats();
+    }, [refreshStats]),
+  );
+
   const progress = stats.total > 0 ? stats.completed / stats.total : 0;
 
   return (
@@ -138,7 +147,7 @@ export default function HomeScreen({ navigation }: Props) {
         <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
 
         {/* ⑥ Ações */}
-        <QuickActions stats={stats} navigation={navigation} />
+        <QuickActions stats={stats} navigation={navigation} onDeleted={refreshStats} />
       </Animated.View>
     </ScrollView>
   );
@@ -430,11 +439,20 @@ const createConnStyles = (colors: any) => StyleSheet.create({
 interface QuickActionsProps {
   stats: StatsData;
   navigation: Props['navigation'];
+  onDeleted: () => void;
 }
 
-function QuickActions({ stats, navigation }: QuickActionsProps) {
+function QuickActions({ stats, navigation, onDeleted }: QuickActionsProps) {
   const { colors } = useTheme();
   const qa = React.useMemo(() => createQaStyles(colors), [colors]);
+  const [modalVisible, setModalVisible] = useState(false);
+
+  const handleConfirmDelete = () => {
+    DatabaseService.clearDeliveries();
+    setModalVisible(false);
+    onDeleted();
+  };
+
   return (
     <View style={qa.root}>
       <Text style={qa.sectionLabel}>AÇÕES RÁPIDAS</Text>
@@ -481,9 +499,403 @@ function QuickActions({ stats, navigation }: QuickActionsProps) {
         prominent
         onPress={() => navigation.navigate('Map')}
       />
+
+      {/* Botão Card Moderno de Apagar Planilha */}
+      <DeleteSpreadsheetCard
+        total={stats.total}
+        onPress={() => setModalVisible(true)}
+      />
+
+      {/* Modal Customizado de Confirmação */}
+      <DeleteSpreadsheetModal
+        visible={modalVisible}
+        stats={stats}
+        onClose={() => setModalVisible(false)}
+        onConfirm={handleConfirmDelete}
+      />
     </View>
   );
 }
+
+/* ─── Delete Spreadsheet Button (Clean & Modern Action) ─── */
+function DeleteSpreadsheetCard({
+  total,
+  onPress,
+}: {
+  total: number;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const ds = React.useMemo(() => createDeleteStyles(colors), [colors]);
+  const disabled = total === 0;
+
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        ds.btn,
+        disabled && ds.btnDisabled,
+        !disabled && pressed && ds.btnPressed,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <View style={ds.leftContent}>
+        <View style={[ds.iconBox, disabled && ds.iconBoxDisabled]}>
+          <Text style={ds.icon}>🗑️</Text>
+        </View>
+        <View style={ds.textBlock}>
+          <Text style={[ds.title, disabled && ds.titleDisabled]}>
+            Apagar Planilha
+          </Text>
+          <Text style={[ds.sublabel, disabled && ds.sublabelDisabled]}>
+            {total > 0
+              ? `${total} ${total === 1 ? 'entrega importada' : 'entregas importadas'}`
+              : 'Nenhuma planilha carregada'}
+          </Text>
+        </View>
+      </View>
+
+      {!disabled && (
+        <View style={ds.pillBadge}>
+          <Text style={ds.pillText}>Limpar</Text>
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+/* ─── Custom Modern Delete Confirmation Modal ─── */
+function DeleteSpreadsheetModal({
+  visible,
+  stats,
+  onClose,
+  onConfirm,
+}: {
+  visible: boolean;
+  stats: StatsData;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { colors } = useTheme();
+  const dm = React.useMemo(() => createModalStyles(colors), [colors]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={dm.overlay}>
+        <Pressable style={dm.backdrop} onPress={onClose} />
+
+        <View style={dm.sheet}>
+          {/* Drag Handle */}
+          <View style={dm.handle} />
+
+          {/* Clean Danger Icon */}
+          <View style={dm.iconCircle}>
+            <Text style={dm.headerIcon}>🗑️</Text>
+          </View>
+
+          {/* Header Texts */}
+          <View style={dm.headerText}>
+            <Text style={dm.title}>Apagar Planilha de Entregas?</Text>
+            <Text style={dm.description}>
+              Todas as <Text style={dm.boldText}>{stats.total} entregas</Text> salvas e a rota atual serão removidas permanentemente deste dispositivo.
+            </Text>
+          </View>
+
+          {/* Stats Breakdown Row */}
+          {stats.total > 0 && (
+            <View style={dm.statsBox}>
+              <ModalStatTile label="Total" count={stats.total} color={colors.primary} icon="📦" />
+              <ModalStatTile label="Entregues" count={stats.completed} color={colors.success} icon="✅" />
+              <ModalStatTile label="Pendentes" count={stats.pending} color={colors.warning} icon="⏳" />
+              <ModalStatTile label="Falhas" count={stats.failed} color={colors.danger} icon="❌" />
+            </View>
+          )}
+
+          {/* Google Quota Safety Notice */}
+          <View style={dm.noticeBox}>
+            <Text style={dm.noticeIcon}>💡</Text>
+            <Text style={dm.noticeText}>
+              A cota diária do Google Geocoding usada hoje não é afetada.
+            </Text>
+          </View>
+
+          {/* Action Buttons */}
+          <View style={dm.actionsRow}>
+            <Pressable
+              style={({ pressed }) => [dm.cancelBtn, pressed && dm.btnPressed]}
+              onPress={onClose}
+            >
+              <Text style={dm.cancelBtnText}>Cancelar</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [dm.confirmBtn, pressed && dm.btnPressed]}
+              onPress={onConfirm}
+            >
+              <Text style={dm.confirmBtnText}>Sim, Apagar Tudo</Text>
+            </Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ModalStatTile({
+  label,
+  count,
+  color,
+  icon,
+}: {
+  label: string;
+  count: number;
+  color: string;
+  icon: string;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={[modalStatStyles.tile, { borderColor: colors.border }]}>
+      <Text style={modalStatStyles.icon}>{icon}</Text>
+      <Text style={[modalStatStyles.count, { color }]}>{count}</Text>
+      <Text style={[modalStatStyles.label, { color: colors.textMuted }]}>{label}</Text>
+    </View>
+  );
+}
+
+const modalStatStyles = StyleSheet.create({
+  tile: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(0,0,0,0.02)',
+    borderWidth: 1,
+    gap: 2,
+  },
+  icon: { fontSize: 13 },
+  count: { ...typography.titleSmall, fontWeight: '700' },
+  label: { ...typography.caption, fontSize: 10, fontWeight: '600' },
+});
+
+const createDeleteStyles = (colors: any) => StyleSheet.create({
+  btn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.md,
+    ...shadows.sm,
+  },
+  btnDisabled: {
+    opacity: 0.45,
+  },
+  btnPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.985 }],
+    backgroundColor: colors.dangerGhost,
+    borderColor: colors.danger + '33',
+  },
+  leftContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    flex: 1,
+    minWidth: 0,
+  },
+  iconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.dangerGhost,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  iconBoxDisabled: {
+    backgroundColor: colors.border,
+  },
+  icon: {
+    fontSize: 20,
+  },
+  textBlock: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  title: {
+    ...typography.bodyMedium,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  titleDisabled: {
+    color: colors.textMuted,
+  },
+  sublabel: {
+    ...typography.caption,
+    color: colors.textMuted,
+  },
+  sublabelDisabled: {
+    color: colors.textDisabled,
+  },
+  pillBadge: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.full,
+    backgroundColor: colors.dangerGhost,
+    borderWidth: 1,
+    borderColor: colors.danger + '33',
+  },
+  pillText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.danger,
+  },
+});
+
+const createModalStyles = (colors: any) => StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.65)',
+    justifyContent: 'flex-end',
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFill,
+  },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    padding: spacing.xl,
+    paddingTop: spacing.md,
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderBottomWidth: 0,
+    ...shadows.xl,
+  },
+  handle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    backgroundColor: colors.borderStrong,
+    borderRadius: radius.full,
+    marginBottom: spacing.xs,
+  },
+  iconCircle: {
+    alignSelf: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: radius.full,
+    backgroundColor: colors.dangerGhost,
+    borderWidth: 1.5,
+    borderColor: colors.danger + '40',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.xs,
+  },
+  headerIcon: {
+    fontSize: 24,
+  },
+  headerText: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  title: {
+    ...typography.title,
+    fontWeight: '700',
+    color: colors.text,
+    textAlign: 'center',
+  },
+  description: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 19,
+  },
+  boldText: {
+    fontWeight: '700',
+    color: colors.danger,
+  },
+  statsBox: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.lg,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  noticeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.primaryGhost,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.primary + '22',
+  },
+  noticeIcon: {
+    fontSize: 14,
+  },
+  noticeText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flex: 1,
+    lineHeight: 16,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: spacing.xs,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  cancelBtnText: {
+    ...typography.bodyMedium,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  confirmBtn: {
+    flex: 1.3,
+    backgroundColor: colors.danger,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadows.colored(colors.danger),
+  },
+  confirmBtnText: {
+    ...typography.bodyMedium,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  btnPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
+});
 
 interface ActionBtnProps {
   icon: string;
@@ -492,24 +904,46 @@ interface ActionBtnProps {
   color: string;
   disabled?: boolean;
   prominent?: boolean;
+  danger?: boolean;
   flex?: boolean;
   onPress: () => void;
 }
 
-function ActionBtn({ icon, label, sublabel, color, disabled, prominent, flex, onPress }: ActionBtnProps) {
+function ActionBtn({ icon, label, sublabel, color, disabled, prominent, danger, flex, onPress }: ActionBtnProps) {
   const { colors } = useTheme();
   const ab = React.useMemo(() => createAbStyles(colors), [colors]);
   const containerStyle: ViewStyle[] = [
     ab.btn,
     prominent ? ab.btnProminent : {},
-    { backgroundColor: disabled ? colors.surfaceElevated : (prominent ? color : colors.surface) },
+    {
+      backgroundColor: disabled
+        ? colors.surfaceElevated
+        : prominent
+        ? color
+        : danger
+        ? colors.dangerGhost
+        : colors.surface,
+    },
+    danger && !disabled && !prominent ? { borderColor: colors.danger + '44' } : {},
     disabled ? ab.btnDisabled : {},
     flex ? { flex: 1 } : {},
     prominent && !disabled ? (shadows.colored(color) as ViewStyle) : {},
   ];
 
-  const textColor = prominent ? '#fff' : (disabled ? colors.textMuted : colors.text);
-  const subColor  = prominent ? 'rgba(255,255,255,0.75)' : (disabled ? colors.textDisabled : colors.textMuted);
+  const textColor = prominent
+    ? '#fff'
+    : disabled
+    ? colors.textMuted
+    : danger
+    ? colors.danger
+    : colors.text;
+  const subColor = prominent
+    ? 'rgba(255,255,255,0.75)'
+    : disabled
+    ? colors.textDisabled
+    : danger
+    ? colors.danger + 'aa'
+    : colors.textMuted;
 
   return (
     <Pressable

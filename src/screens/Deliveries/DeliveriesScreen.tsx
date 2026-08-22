@@ -72,13 +72,25 @@ export default function DeliveriesScreen({ navigation }: Props) {
 
   const handleCompleteDelivery = (d: DeliveryEntity) => {
     DatabaseService.updateDeliveryStatus(d.id, 'completed', { deliveredAt: Date.now() });
-    reload();
+    setAll((prev) =>
+      prev.map((item) =>
+        item.id === d.id
+          ? { ...item, status: 'completed', deliveredAt: Date.now(), failReason: null }
+          : item,
+      ),
+    );
   };
 
   const handleFailDelivery = (d: DeliveryEntity, reason: FailReason) => {
     DatabaseService.updateDeliveryStatus(d.id, 'failed', { failReason: reason });
     setFailModalId(null);
-    reload();
+    setAll((prev) =>
+      prev.map((item) =>
+        item.id === d.id
+          ? { ...item, status: 'failed', failReason: reason, deliveredAt: null }
+          : item,
+      ),
+    );
   };
 
   const renderItem = ({ item }: { item: DeliveryEntity }) => (

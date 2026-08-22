@@ -90,6 +90,17 @@ export interface DeliveryEntity {
   notes: string | null;
   deliveredAt: number | null;       // unix timestamp ms
   createdAt: number | null;
+  originalData?: string | null;     // JSON string com dados brutos da linha
+}
+
+export interface ColumnMappingConfig {
+  nameCol?: string;
+  addressCols: string[];
+  latitudeCol?: string;
+  longitudeCol?: string;
+  phoneCol?: string;
+  orderCodeCol?: string;
+  notesCol?: string;
 }
 
 /* ------------------------- Valhalla types ------------------------- */
@@ -152,6 +163,7 @@ export const SNAP_CONFIG = {
 
 export type GeocodingProvider =
   | 'spreadsheet'
+  | 'google'
   | 'maptiler'
   | 'brasilapi'
   | 'viacep+nominatim'
