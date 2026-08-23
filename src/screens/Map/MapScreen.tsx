@@ -60,6 +60,112 @@ const TRANS_EXPANDED = 0;
 const TRANS_HALF = SNAP_EXPANDED - SNAP_HALF;
 const TRANS_COLLAPSED = SNAP_EXPANDED - SNAP_COLLAPSED;
 
+interface StopItemProps {
+  delivery: DeliveryEntity;
+  index: number;
+  isNext: boolean;
+  isCompleted: boolean;
+  isFailed: boolean;
+  timeStr: string;
+  isLastItem: boolean;
+  onSelect: (delivery: DeliveryEntity) => void;
+}
+
+const StopTimelineRow = React.memo(
+  ({
+    delivery,
+    index,
+    isNext,
+    isCompleted,
+    isFailed,
+    timeStr,
+    isLastItem,
+    onSelect,
+  }: StopItemProps) => {
+    const seqStr = String(index + 1).padStart(2, '0');
+
+    return (
+      <View style={styles.stopTimelineRow}>
+        {/* Left Column: Timeline Line + Badge Node */}
+        <View style={styles.nodeColumn}>
+          <View
+            style={[
+              styles.timelineBadge,
+              isNext && styles.timelineBadgeNext,
+              isCompleted && styles.timelineBadgeCompleted,
+              isFailed && styles.timelineBadgeFailed,
+            ]}
+          >
+            <Text
+              style={[
+                styles.timelineBadgeText,
+                (isCompleted || isFailed) && styles.timelineBadgeTextWhite,
+              ]}
+            >
+              {isCompleted ? '✓' : isFailed ? '✕' : seqStr}
+            </Text>
+          </View>
+          {!isLastItem && <View style={styles.timelineVerticalLine} />}
+        </View>
+
+        {/* Right Column: Stop Card */}
+        <Pressable
+          style={({ pressed }) => [
+            styles.stopCard,
+            isNext && styles.stopCardNext,
+            pressed && styles.stopCardPressed,
+          ]}
+          onPress={() => onSelect(delivery)}
+        >
+          {/* Top row: Time + Status Badge */}
+          <View style={styles.stopCardHeader}>
+            <Text style={styles.stopTimeText}>{timeStr}</Text>
+
+            <View
+              style={[
+                styles.statusPill,
+                isCompleted && styles.statusPillCompleted,
+                isFailed && styles.statusPillFailed,
+              ]}
+            >
+              <Text style={styles.statusPillIcon}>
+                {isCompleted ? '✅' : isFailed ? '❌' : '📦'}
+              </Text>
+              <Text style={styles.statusPillText}>
+                {isCompleted ? 'Entregue' : isFailed ? 'Insucesso' : 'Pendente'}
+              </Text>
+            </View>
+          </View>
+
+          {/* Main Address line + Chevron */}
+          <View style={styles.stopCardBody}>
+            <Text
+              style={styles.stopAddressText}
+              numberOfLines={2}
+              ellipsizeMode="tail"
+            >
+              {delivery.destination || delivery.address || delivery.name}
+              {delivery.bairro ? ` · ${delivery.bairro}` : ''}
+              {delivery.city ? `, ${delivery.city}` : ''}
+              {delivery.zipCode ? ` (${delivery.zipCode})` : ''}
+            </Text>
+            <Text style={styles.cardChevron}>›</Text>
+          </View>
+        </Pressable>
+      </View>
+    );
+  },
+  (prev, next) =>
+    prev.delivery.id === next.delivery.id &&
+    prev.delivery.status === next.delivery.status &&
+    prev.isNext === next.isNext &&
+    prev.isCompleted === next.isCompleted &&
+    prev.isFailed === next.isFailed &&
+    prev.timeStr === next.timeStr &&
+    prev.index === next.index &&
+    prev.isLastItem === next.isLastItem,
+);
+
 export default function MapScreen({ navigation }: Props) {
   const { colors: _themeColors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -312,14 +418,6 @@ export default function MapScreen({ navigation }: Props) {
     reloadDeliveries();
   }, [reloadDeliveries]);
 
-  /* ─── Auto Proximity Optimization on Load/Import ─── */
-  useEffect(() => {
-    if (route || locatedDeliveries.length === 0 || !currentLocation || optimizing) return;
-
-    // Run proximity optimization from current GPS location
-    optimizeRoute();
-  }, [locatedDeliveries.length, currentLocation, optimizeRoute, optimizing, route]);
-
   const formatDistance = (m: number) =>
     m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
   const formatDuration = (s: number) => {
@@ -420,6 +518,14 @@ export default function MapScreen({ navigation }: Props) {
       setOptimizing(false);
     }
   }, [currentLocation, locatedDeliveries, costingMode, fitRoute]);
+
+  /* ─── Auto Proximity Optimization on Load/Import ─── */
+  useEffect(() => {
+    if (route || locatedDeliveries.length === 0 || !currentLocation || optimizing) return;
+
+    // Run proximity optimization from current GPS location
+    optimizeRoute();
+  }, [locatedDeliveries.length, currentLocation, optimizeRoute, optimizing, route]);
 
   const recalculateRoute = useCallback(async () => {
     const remaining = orderedDeliveries.filter(
@@ -908,19 +1014,26 @@ export default function MapScreen({ navigation }: Props) {
                   </Pressable>
                 </View>
 
-                {/* 2. Subheader: ⚡ Otimizadas & N paradas ⓘ */}
+                {/* 2. Subheader: ⚡ Reotimizar Rota & N paradas ⓘ */}
                 <View style={styles.statusSubheader}>
-                  <View style={styles.optimizedBadge}>
+                  <Pressable
+                    style={[styles.optimizedBadge, optimizing && styles.btnDisabled]}
+                    onPress={optimizeRoute}
+                    disabled={optimizing}
+                  >
                     <Text style={styles.optimizedLightning}>⚡</Text>
-                    <Text style={styles.optimizedText}>Otimizadas</Text>
-                  </View>
+                    <Text style={styles.optimizedText}>
+                      {optimizing ? 'Otimizando...' : 'Reotimizar Rota'}
+                    </Text>
+                  </Pressable>
 
                   <Pressable
                     style={styles.stopsCountWrap}
                     onPress={() => {
                       Alert.alert(
                         'Informações da Rota',
-                        `${totalStopsCount} paradas no total. ${completedIds.size
+                        `${totalStopsCount} paradas no total. ${
+                          completedIds.size
                         } concluídas, ${totalStopsCount - completedIds.size} pendentes.`,
                       );
                     }}
@@ -933,7 +1046,6 @@ export default function MapScreen({ navigation }: Props) {
                 {/* 3. Timeline List of Stops */}
                 <View style={styles.timelineContainer}>
                   {filteredOrderedDeliveries.map((delivery, index) => {
-                    const seqStr = String(index + 1).padStart(2, '0');
                     const isCompleted =
                       completedIds.has(delivery.id) || delivery.status === 'completed';
                     const isFailed = delivery.status === 'failed';
@@ -942,74 +1054,17 @@ export default function MapScreen({ navigation }: Props) {
                     const isLastItem = index === filteredOrderedDeliveries.length - 1;
 
                     return (
-                      <View key={delivery.id} style={styles.stopTimelineRow}>
-                        {/* Left Column: Timeline Line + Badge Node */}
-                        <View style={styles.nodeColumn}>
-                          <View
-                            style={[
-                              styles.timelineBadge,
-                              isNext && styles.timelineBadgeNext,
-                              isCompleted && styles.timelineBadgeCompleted,
-                              isFailed && styles.timelineBadgeFailed,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.timelineBadgeText,
-                                (isCompleted || isFailed) && styles.timelineBadgeTextWhite,
-                              ]}
-                            >
-                              {isCompleted ? '✓' : isFailed ? '✕' : seqStr}
-                            </Text>
-                          </View>
-                          {!isLastItem && <View style={styles.timelineVerticalLine} />}
-                        </View>
-
-                        {/* Right Column: Stop Card */}
-                        <Pressable
-                          style={({ pressed }) => [
-                            styles.stopCard,
-                            isNext && styles.stopCardNext,
-                            pressed && styles.stopCardPressed,
-                          ]}
-                          onPress={() => selectStop(delivery)}
-                        >
-                          {/* Top row: Time + Status Badge */}
-                          <View style={styles.stopCardHeader}>
-                            <Text style={styles.stopTimeText}>{timeStr}</Text>
-
-                            <View
-                              style={[
-                                styles.statusPill,
-                                isCompleted && styles.statusPillCompleted,
-                                isFailed && styles.statusPillFailed,
-                              ]}
-                            >
-                              <Text style={styles.statusPillIcon}>
-                                {isCompleted ? '✅' : isFailed ? '❌' : '📦'}
-                              </Text>
-                              <Text style={styles.statusPillText}>
-                                {isCompleted ? 'Entregue' : isFailed ? 'Insucesso' : 'Pendente'}
-                              </Text>
-                            </View>
-                          </View>
-
-                          {/* Main Address line + Chevron */}
-                          <View style={styles.stopCardBody}>
-                            <Text
-                              style={styles.stopAddressText}
-                              numberOfLines={2}
-                              ellipsizeMode="tail"
-                            >
-                              {delivery.destination || delivery.address || delivery.name}
-                              {delivery.bairro ? ` · ${delivery.bairro}` : ''}
-                              {delivery.city ? `, ${delivery.city}` : ''}
-                              {delivery.zipCode ? ` (${delivery.zipCode})` : ''}
-                            </Text>
-                            <Text style={styles.cardChevron}>›</Text>
-                          </View>
-                        </Pressable>
-                      </View>
+                      <StopTimelineRow
+                        key={delivery.id}
+                        delivery={delivery}
+                        index={index}
+                        isNext={isNext}
+                        isCompleted={isCompleted}
+                        isFailed={isFailed}
+                        timeStr={timeStr}
+                        isLastItem={isLastItem}
+                        onSelect={selectStop}
+                      />
                     );
                   })}
                 </View>
@@ -1033,16 +1088,33 @@ export default function MapScreen({ navigation }: Props) {
                 <Text style={styles.importSheetBtnText}>Importar planilha</Text>
               </Pressable>
             ) : (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.finishRouteBtn,
-                  optimizing && styles.btnDisabled,
-                  pressed && styles.btnPressed,
-                ]}
-                onPress={() => {
-                  if (!route) {
-                    optimizeRoute();
-                  } else {
+              <View style={styles.bottomActionsRow}>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.reoptimizeBtn,
+                    optimizing && styles.btnDisabled,
+                    pressed && styles.btnPressed,
+                  ]}
+                  onPress={optimizeRoute}
+                  disabled={optimizing}
+                >
+                  {optimizing ? (
+                    <ActivityIndicator size="small" color="#2563EB" />
+                  ) : (
+                    <>
+                      <Text style={styles.reoptimizeBtnIcon}>⚡</Text>
+                      <Text style={styles.reoptimizeBtnText}>Otimizar</Text>
+                    </>
+                  )}
+                </Pressable>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.finishRouteBtn,
+                    pressed && styles.btnPressed,
+                    { flex: 1 },
+                  ]}
+                  onPress={() => {
                     Alert.alert(
                       'Finalizar Rota',
                       'Deseja concluir o itinerário da rota atual?',
@@ -1057,22 +1129,12 @@ export default function MapScreen({ navigation }: Props) {
                         },
                       ],
                     );
-                  }
-                }}
-              >
-                {optimizing ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Text style={styles.finishRouteBtnIcon}>
-                      {!route ? '⚡' : '✓'}
-                    </Text>
-                    <Text style={styles.finishRouteBtnText}>
-                      {!route ? 'Otimizar e Iniciar rota' : 'Finalizar rota'}
-                    </Text>
-                  </>
-                )}
-              </Pressable>
+                  }}
+                >
+                  <Text style={styles.finishRouteBtnIcon}>✓</Text>
+                  <Text style={styles.finishRouteBtnText}>Finalizar rota</Text>
+                </Pressable>
+              </View>
             )}
           </View>
         )}
@@ -1706,6 +1768,32 @@ const styles = StyleSheet.create({
   btnPressed: {
     opacity: 0.85,
     transform: [{ scale: 0.98 }],
+  },
+  bottomActionsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+  },
+  reoptimizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#BFDBFE',
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    gap: 6,
+  },
+  reoptimizeBtnIcon: {
+    fontSize: 16,
+    color: '#2563EB',
+  },
+  reoptimizeBtnText: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#2563EB',
   },
 
   /* ── Empty State ── */
