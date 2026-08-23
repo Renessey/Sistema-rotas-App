@@ -11,6 +11,7 @@ import {
   Modal,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import { DatabaseService } from '../../storage/DatabaseService';
@@ -19,21 +20,27 @@ import { colors, spacing, radius, shadows, typography, statusConfig } from '../.
 import { NavigationLauncher } from '../../services/navigation/NavigationLauncher';
 import { AddDeliveryModal } from '../../components/AddDeliveryModal';
 
+import { DeliveryListsModal } from '../../components/Deliveries/DeliveryListsModal';
+import type { DeliveryListEntity } from '../../types/geo';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Deliveries'>;
 
 type FilterTab = 'all' | DeliveryStatus | 'no_location';
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: 'all',         label: '📦 Todas'      },
-  { key: 'pending',     label: '⏳ Pendentes'   },
-  { key: 'in_progress', label: '🚚 Em Rota'     },
-  { key: 'completed',   label: '✅ Entregues'   },
-  { key: 'failed',      label: '❌ Insucesso'   },
-  { key: 'no_location', label: '📍 Sem Local'   },
+  { key: 'all', label: '📦 Todas' },
+  { key: 'pending', label: '⏳ Pendentes' },
+  { key: 'optimized', label: '🗺️ Na Rota' },
+  { key: 'completed', label: '✅ Entregues' },
+  { key: 'failed', label: '❌ Insucesso' },
+  { key: 'no_location', label: '⚠️ Sem Coords' },
 ];
 
 export default function DeliveriesScreen({ navigation }: Props) {
+  const insets = useSafeAreaInsets();
   const [all, setAll] = useState<DeliveryEntity[]>([]);
+  const [activeList, setActiveList] = useState<DeliveryListEntity | null>(null);
+  const [showListsModal, setShowListsModal] = useState(false);
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [failModalId, setFailModalId] = useState<number | null>(null);
@@ -41,32 +48,33 @@ export default function DeliveriesScreen({ navigation }: Props) {
   const searchAnim = useRef(new Animated.Value(0)).current;
 
   const reload = useCallback(() => {
-    setAll(DatabaseService.getAllDeliveries());
+    const active = DatabaseService.getActiveList();
+    setActiveList(active);
+    setAll(DatabaseService.getAllDeliveries(active?.id));
   }, []);
 
   useFocusEffect(reload);
 
-  // Animate search bar in
   useEffect(() => {
     Animated.timing(searchAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
   }, [searchAnim]);
 
   const filtered = all.filter((d) => {
-    // Filter by tab
     if (activeFilter === 'no_location') {
-      if (d.latitude !== null && d.longitude !== null) return false;
+      if (d.latitude !== null && d.longitude !== null && d.status !== 'invalid_coords') return false;
     } else if (activeFilter !== 'all') {
       if (d.status !== activeFilter) return false;
     }
-    // Search
     if (!search.trim()) return true;
     const q = search.toLowerCase();
     return (
-      d.name?.toLowerCase().includes(q) ||
-      d.address?.toLowerCase().includes(q) ||
-      d.orderCode?.toLowerCase().includes(q) ||
-      d.neighborhood?.toLowerCase().includes(q) ||
-      d.phone?.includes(q)
+      d.destination?.toLowerCase().includes(q) ||
+      d.bairro?.toLowerCase().includes(q) ||
+      d.city?.toLowerCase().includes(q) ||
+      d.zipCode?.toLowerCase().includes(q) ||
+      d.pedido?.toLowerCase().includes(q) ||
+      d.telefone?.includes(q) ||
+      d.name?.toLowerCase().includes(q)
     );
   });
 
@@ -100,21 +108,22 @@ export default function DeliveriesScreen({ navigation }: Props) {
       onComplete={() => handleCompleteDelivery(item)}
       onFail={() => setFailModalId(item.id)}
       onWhatsApp={() => {
-        if (item.phone) {
-          const addr = `${item.address}${item.number ? ', ' + item.number : ''}`;
-          NavigationLauncher.openWhatsApp(item.phone, item.name, addr);
+        const phone = item.telefone || item.phone;
+        if (phone) {
+          NavigationLauncher.openWhatsApp(phone, item.destination, item.destination);
         } else {
           Alert.alert('Sem telefone', 'Esta entrega não possui número de telefone cadastrado.');
         }
       }}
       onWaze={() => {
         if (item.latitude !== null && item.longitude !== null) {
-          NavigationLauncher.openNavigation([item.longitude, item.latitude], item.address, 'waze');
+          NavigationLauncher.openNavigation([item.longitude, item.latitude], item.destination, 'waze');
         }
       }}
       onCall={() => {
-        if (item.phone) {
-          NavigationLauncher.callPhone(item.phone);
+        const phone = item.telefone || item.phone;
+        if (phone) {
+          NavigationLauncher.callPhone(phone);
         } else {
           Alert.alert('Sem telefone', 'Esta entrega não possui número de telefone cadastrado.');
         }
@@ -124,17 +133,38 @@ export default function DeliveriesScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
+      {/* Top Header */}
+      <View style={[styles.screenHeader, { paddingTop: Math.max(insets.top, spacing.xs) + spacing.xs }]}>
+        <View style={styles.headerLeftCol}>
+          <Text style={styles.screenHeaderTitle}>Lista de Entregas</Text>
+          <Pressable
+            style={styles.listSelectorPill}
+            onPress={() => setShowListsModal(true)}
+            hitSlop={6}
+          >
+            <Text style={styles.listSelectorPillText} numberOfLines={1}>
+              📋 {activeList ? activeList.name : 'Todas as Listas'} ▾
+            </Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.headerRightRow}>
+          <Pressable style={styles.headerAddBtn} onPress={() => setShowAddModal(true)}>
+            <Text style={styles.headerAddBtnText}>+ Parada</Text>
+          </Pressable>
+        </View>
+      </View>
+
       {/* Search Bar */}
       <Animated.View style={[styles.searchBar, { opacity: searchAnim }]}>
         <Text style={styles.searchIcon}>🔍</Text>
         <TextInput
           style={styles.searchInput}
-          placeholder="Buscar por nome, endereço, pedido…"
+          placeholder="Buscar destino, bairro, pedido…"
           placeholderTextColor={colors.textMuted}
           value={search}
           onChangeText={setSearch}
           returnKeyType="search"
-          clearButtonMode="while-editing"
         />
         {search.length > 0 && (
           <Pressable onPress={() => setSearch('')}>
@@ -151,11 +181,12 @@ export default function DeliveriesScreen({ navigation }: Props) {
         contentContainerStyle={styles.tabBar}
         showsHorizontalScrollIndicator={false}
         renderItem={({ item: tab }) => {
-          const count = tab.key === 'all'
-            ? all.length
-            : tab.key === 'no_location'
-            ? all.filter(d => d.latitude === null).length
-            : all.filter(d => d.status === tab.key).length;
+          const count =
+            tab.key === 'all'
+              ? all.length
+              : tab.key === 'no_location'
+              ? all.filter((d) => d.latitude === null || d.status === 'invalid_coords').length
+              : all.filter((d) => d.status === tab.key).length;
           const isActive = activeFilter === tab.key;
           return (
             <Pressable
@@ -185,12 +216,10 @@ export default function DeliveriesScreen({ navigation }: Props) {
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyIcon}>
-              {all.length === 0 ? '📂' : '🔍'}
-            </Text>
+            <Text style={styles.emptyIcon}>{all.length === 0 ? '📂' : '🔍'}</Text>
             <Text style={styles.emptyText}>
               {all.length === 0
-                ? 'Nenhuma entrega importada.\nVá em "Importar Planilha".'
+                ? 'Nenhuma entrega importada.\nToque em Importar Planilha no menu.'
                 : 'Nenhuma entrega encontrada com os filtros atuais.'}
             </Text>
           </View>
@@ -200,16 +229,11 @@ export default function DeliveriesScreen({ navigation }: Props) {
       {/* Fail reason modal */}
       {failModalId !== null && (
         <FailModal
-          delivery={all.find(d => d.id === failModalId)!}
-          onSelect={(r) => handleFailDelivery(all.find(d => d.id === failModalId)!, r)}
+          delivery={all.find((d) => d.id === failModalId)!}
+          onSelect={(r) => handleFailDelivery(all.find((d) => d.id === failModalId)!, r)}
           onClose={() => setFailModalId(null)}
         />
       )}
-
-      {/* FAB — Add Delivery */}
-      <Pressable style={styles.fab} onPress={() => setShowAddModal(true)}>
-        <Text style={styles.fabText}>+</Text>
-      </Pressable>
 
       {/* Add Delivery Modal */}
       <AddDeliveryModal
@@ -217,13 +241,28 @@ export default function DeliveriesScreen({ navigation }: Props) {
         onClose={() => setShowAddModal(false)}
         onSaved={reload}
       />
+
+      {/* Delivery Lists Modal (Lista 1, Lista 2, Lista 3...) */}
+      <DeliveryListsModal
+        visible={showListsModal}
+        onClose={() => setShowListsModal(false)}
+        onListChanged={(newList) => {
+          setActiveList(newList);
+          reload();
+        }}
+      />
     </View>
   );
 }
 
-/* ─── Delivery Card ─── */
 function DeliveryCard({
-  item, onMapPress, onComplete, onFail, onWhatsApp, onWaze, onCall,
+  item,
+  onMapPress,
+  onComplete,
+  onFail,
+  onWhatsApp,
+  onWaze,
+  onCall,
 }: {
   item: DeliveryEntity;
   onMapPress: () => void;
@@ -233,27 +272,23 @@ function DeliveryCard({
   onWaze: () => void;
   onCall: () => void;
 }) {
-  const cfg = statusConfig[item.status];
+  const cfg = statusConfig[item.status] || statusConfig.pending;
   const located = item.latitude !== null && item.longitude !== null;
-  const fullAddress = [
-    item.address,
-    item.number,
-    item.complement,
-    item.neighborhood,
-    `${item.city}/${item.state}`,
-  ].filter(Boolean).join(', ');
+  const orderNum = item.ordem ?? item.sequence;
 
   return (
     <View style={[cardStyles.card, { borderLeftColor: cfg.color, borderLeftWidth: 4 }]}>
       {/* Header */}
       <View style={cardStyles.header}>
         <View style={cardStyles.headerLeft}>
-          {item.sequence !== null && (
+          {orderNum !== null && orderNum !== undefined && (
             <View style={[cardStyles.seqBadge, { backgroundColor: cfg.color }]}>
-              <Text style={cardStyles.seqText}>{item.sequence + 1}</Text>
+              <Text style={cardStyles.seqText}>{orderNum}</Text>
             </View>
           )}
-          <Text style={cardStyles.name} numberOfLines={1}>{item.name}</Text>
+          <Text style={cardStyles.name} numberOfLines={1}>
+            {item.destination}
+          </Text>
         </View>
         <View style={[cardStyles.statusBadge, { backgroundColor: cfg.bg }]}>
           <Text style={cardStyles.statusIcon}>{cfg.icon}</Text>
@@ -261,26 +296,41 @@ function DeliveryCard({
         </View>
       </View>
 
-      {/* Address */}
-      <Text style={cardStyles.address} numberOfLines={2}>{fullAddress}</Text>
+      {/* Location / Bairro / Cidade */}
+      {(item.bairro || item.city) && (
+        <Text style={cardStyles.bairroText}>
+          📍 {[item.bairro, item.city].filter(Boolean).join(' · ')}
+        </Text>
+      )}
+
+      {/* Coordenadas Exatas */}
+      {located ? (
+        <Text style={cardStyles.coordsText}>
+          🌐 Lat: {item.latitude} | Lon: {item.longitude}
+        </Text>
+      ) : (
+        <Text style={[cardStyles.coordsText, { color: colors.danger }]}>
+          ⚠️ Coordenadas não informadas ou inválidas
+        </Text>
+      )}
 
       {/* Meta Row */}
       <View style={cardStyles.metaRow}>
-        {item.orderCode ? (
+        {item.pedido ? (
           <View style={cardStyles.metaChip}>
-            <Text style={cardStyles.metaChipText}>📋 {item.orderCode}</Text>
+            <Text style={cardStyles.metaChipText}>📦 {item.pedido}</Text>
           </View>
         ) : null}
-        {item.cep ? (
+        {item.zipCode ? (
           <View style={cardStyles.metaChip}>
-            <Text style={cardStyles.metaChipText}>📮 {item.cep}</Text>
+            <Text style={cardStyles.metaChipText}>📮 {item.zipCode}</Text>
           </View>
         ) : null}
-        <View style={[cardStyles.metaChip, { backgroundColor: located ? colors.successGhost : colors.dangerGhost }]}>
-          <Text style={[cardStyles.metaChipText, { color: located ? colors.success : colors.danger }]}>
-            {located ? '📍 Localizada' : '⚠️ Sem coord.'}
-          </Text>
-        </View>
+        {item.telefone ? (
+          <View style={cardStyles.metaChip}>
+            <Text style={cardStyles.metaChipText}>📞 {item.telefone}</Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Notes */}
@@ -288,7 +338,7 @@ function DeliveryCard({
 
       {/* Action Buttons */}
       <View style={cardStyles.actions}>
-        {item.phone ? (
+        {item.telefone ? (
           <>
             <QuickBtn icon="💬" label="WhatsApp" color={colors.success} onPress={onWhatsApp} />
             <QuickBtn icon="📞" label="Ligar" color={colors.primary} onPress={onCall} />
@@ -307,10 +357,24 @@ function DeliveryCard({
   );
 }
 
-function QuickBtn({ icon, label, color, onPress }: { icon: string; label: string; color: string; onPress: () => void }) {
+function QuickBtn({
+  icon,
+  label,
+  color,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  color: string;
+  onPress: () => void;
+}) {
   return (
     <Pressable
-      style={({ pressed }) => [quickBtnStyles.btn, { backgroundColor: color + '18', borderColor: color + '44' }, pressed && { opacity: 0.7 }]}
+      style={({ pressed }) => [
+        quickBtnStyles.btn,
+        { backgroundColor: color + '18', borderColor: color + '44' },
+        pressed && { opacity: 0.7 },
+      ]}
       onPress={onPress}
     >
       <Text style={quickBtnStyles.icon}>{icon}</Text>
@@ -319,24 +383,29 @@ function QuickBtn({ icon, label, color, onPress }: { icon: string; label: string
   );
 }
 
-/* ─── Fail Reason Modal ─── */
 const FAIL_REASONS: { key: FailReason; label: string; icon: string }[] = [
-  { key: 'absent',        label: 'Ausente / Não atendeu', icon: '🚪' },
-  { key: 'refused',       label: 'Recusou a entrega',     icon: '🙅' },
-  { key: 'wrong_address', label: 'Endereço errado',       icon: '📍' },
-  { key: 'no_access',     label: 'Sem acesso ao local',   icon: '🔒' },
-  { key: 'other',         label: 'Outro motivo',          icon: '💬' },
+  { key: 'absent', label: 'Ausente / Não atendeu', icon: '🚪' },
+  { key: 'refused', label: 'Recusou a entrega', icon: '🙅' },
+  { key: 'wrong_address', label: 'Endereço errado', icon: '📍' },
+  { key: 'no_access', label: 'Sem acesso ao local', icon: '🔒' },
+  { key: 'other', label: 'Outro motivo', icon: '💬' },
 ];
 
-function FailModal({ delivery, onSelect, onClose }: {
-  delivery: DeliveryEntity; onSelect: (r: FailReason) => void; onClose: () => void;
+function FailModal({
+  delivery,
+  onSelect,
+  onClose,
+}: {
+  delivery: DeliveryEntity;
+  onSelect: (r: FailReason) => void;
+  onClose: () => void;
 }) {
   return (
     <Modal transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={modalStyles.overlay} onPress={onClose}>
         <View style={modalStyles.box}>
           <Text style={modalStyles.title}>Motivo do Insucesso</Text>
-          <Text style={modalStyles.sub}>{delivery?.name}</Text>
+          <Text style={modalStyles.sub}>{delivery?.destination}</Text>
           {FAIL_REASONS.map((r) => (
             <Pressable key={r.key} style={modalStyles.option} onPress={() => onSelect(r.key)}>
               <Text style={modalStyles.optionIcon}>{r.icon}</Text>
@@ -352,14 +421,67 @@ function FailModal({ delivery, onSelect, onClose }: {
   );
 }
 
-/* ─── Styles ─── */
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
+  screenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  headerLeftCol: {
+    flex: 1,
+    gap: 2,
+  },
+  screenHeaderTitle: {
+    ...typography.displayMedium,
+    color: colors.primary,
+    fontSize: 22,
+  },
+  listSelectorPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceElevated,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical: 3,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    borderColor: colors.primary + '55',
+    gap: 4,
+    marginTop: 2,
+  },
+  listSelectorPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  headerRightRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+  },
+  headerAddBtn: {
+    backgroundColor: colors.primaryGhost,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderWidth: 1,
+    borderColor: colors.primary + '44',
+  },
+  headerAddBtnText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+  },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.surface,
-    margin: spacing.md,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
     borderRadius: radius.lg,
     paddingHorizontal: spacing.md,
     borderWidth: 1,
@@ -374,7 +496,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   clearBtn: { fontSize: 16, color: colors.textMuted, padding: spacing.xs },
-  tabBar: { paddingHorizontal: spacing.md, gap: spacing.sm, paddingBottom: spacing.sm },
+  tabBar: {
+    paddingHorizontal: spacing.md,
+    gap: spacing.sm,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.xs,
+  },
   tab: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -389,27 +516,22 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   tabText: { ...typography.bodySmall, color: colors.textMuted, fontWeight: '500' },
   tabTextActive: { color: '#fff' },
-  tabCount: { backgroundColor: colors.border, borderRadius: radius.full, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.xs },
+  tabCount: {
+    backgroundColor: colors.border,
+    borderRadius: radius.full,
+    minWidth: 20,
+    height: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xs,
+  },
   tabCountActive: { backgroundColor: 'rgba(255,255,255,0.25)' },
   tabCountText: { ...typography.caption, color: colors.textMuted, fontWeight: '700' },
   tabCountTextActive: { color: '#fff' },
-  listContent: { padding: spacing.md, gap: spacing.sm, paddingBottom: 100 },
+  listContent: { padding: spacing.md, gap: spacing.sm, paddingBottom: 40 },
   emptyBox: { alignItems: 'center', paddingTop: spacing.xxxl, gap: spacing.md },
   emptyIcon: { fontSize: 48 },
   emptyText: { ...typography.body, color: colors.textMuted, textAlign: 'center', lineHeight: 22 },
-  fab: {
-    position: 'absolute',
-    right: spacing.xl,
-    bottom: spacing.xl,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.colored(colors.primary),
-  },
-  fabText: { fontSize: 28, color: '#fff', fontWeight: '300', lineHeight: 32 },
 });
 
 const cardStyles = StyleSheet.create({
@@ -417,25 +539,33 @@ const cardStyles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderRadius: radius.md,
     padding: spacing.md,
-    gap: spacing.sm,
+    gap: spacing.xs + 2,
     ...shadows.md,
   },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
   seqBadge: {
-    width: 24, height: 24, borderRadius: 12,
-    alignItems: 'center', justifyContent: 'center',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   seqText: { color: '#fff', ...typography.caption, fontWeight: '700' },
   name: { ...typography.titleSmall, color: colors.text, flex: 1 },
   statusBadge: {
-    flexDirection: 'row', alignItems: 'center', gap: 3,
-    borderRadius: radius.full, paddingHorizontal: spacing.sm, paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
   },
   statusIcon: { fontSize: 11 },
   statusLabel: { ...typography.caption, fontWeight: '700' },
-  address: { ...typography.bodySmall, color: colors.textSecondary, lineHeight: 18 },
-  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  bairroText: { ...typography.bodySmall, color: colors.textSecondary, fontWeight: '500' },
+  coordsText: { ...typography.caption, color: colors.textMuted, fontFamily: 'monospace' },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 2 },
   metaChip: {
     backgroundColor: colors.border,
     borderRadius: radius.full,
@@ -449,9 +579,13 @@ const cardStyles = StyleSheet.create({
 
 const quickBtnStyles = StyleSheet.create({
   btn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: spacing.sm, paddingVertical: spacing.xs,
-    borderRadius: radius.sm, borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radius.sm,
+    borderWidth: 1,
   },
   icon: { fontSize: 13 },
   label: { ...typography.caption, fontWeight: '700' },
@@ -470,16 +604,23 @@ const modalStyles = StyleSheet.create({
   title: { ...typography.title, color: colors.text },
   sub: { ...typography.bodySmall, color: colors.textMuted, marginBottom: spacing.sm },
   option: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-    padding: spacing.md, borderRadius: radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
     backgroundColor: colors.surfaceElevated,
-    borderWidth: 1, borderColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   optionIcon: { fontSize: 20 },
   optionLabel: { ...typography.body, color: colors.text },
   cancel: {
-    alignItems: 'center', padding: spacing.md,
-    borderRadius: radius.md, borderWidth: 1, borderColor: colors.border,
+    alignItems: 'center',
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
     marginTop: spacing.xs,
   },
   cancelText: { ...typography.bodyMedium, color: colors.textMuted },

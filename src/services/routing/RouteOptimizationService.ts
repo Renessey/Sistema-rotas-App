@@ -93,11 +93,13 @@ export class RouteOptimizationService {
   ): number[] {
     const visited = new Set<number>();
     const order: number[] = [];
-    let current = 0; // depot
+    let current = 0; // depot / start position
 
     while (order.length < count) {
+      // 1. Find nearest unvisited stop from current
       let best: number | null = null;
       let bestCost = Infinity;
+
       for (let i = 1; i <= count; i++) {
         if (visited.has(i)) continue;
         const c = cost(current, i);
@@ -106,16 +108,43 @@ export class RouteOptimizationService {
           best = i;
         }
       }
+
       if (best === null) break;
       visited.add(best);
-      order.push(best - 1); // stop index
+      order.push(best - 1); // 0-indexed stop
       current = best;
+
+      // 2. Micro-clustering: check if any unvisited stops are nearby in the same condo/street/neighborhood
+      // (Within cluster radius ~1500m or 150s drive)
+      let clusterSearch = true;
+      while (clusterSearch && order.length < count) {
+        let nearestInCluster: number | null = null;
+        let clusterCost = Infinity;
+
+        for (let j = 1; j <= count; j++) {
+          if (visited.has(j)) continue;
+          const c = cost(current, j);
+          // If within ~1500m / 150s and is currently the nearest neighbor in that cluster
+          if (c <= 1500 && c < clusterCost) {
+            clusterCost = c;
+            nearestInCluster = j;
+          }
+        }
+
+        if (nearestInCluster !== null) {
+          visited.add(nearestInCluster);
+          order.push(nearestInCluster - 1);
+          current = nearestInCluster;
+        } else {
+          clusterSearch = false;
+        }
+      }
     }
 
     return order;
   }
 
-  /** 2-opt: reverses segments to remove crossings */
+  /** Open 2-opt: reverses segments to untangle crossings along the open delivery path */
   private static twoOpt(
     order: number[],
     cost: (i: number, j: number) => number,
@@ -124,7 +153,7 @@ export class RouteOptimizationService {
     const idx = (v: number) => v + 1; // depot is 0
     let improved = true;
     let iterations = 0;
-    const maxIterations = 100;
+    const maxIterations = 80;
 
     while (improved && iterations < maxIterations) {
       improved = false;
@@ -132,13 +161,17 @@ export class RouteOptimizationService {
       for (let i = 0; i < n - 1; i++) {
         for (let k = i + 1; k < n; k++) {
           const beforeI = i === 0 ? idx(0) : idx(order[i - 1]);
-          const afterK = k === n - 1 ? idx(0) : idx(order[k + 1]);
-          const currentCost =
-            cost(beforeI, idx(order[i])) + cost(idx(order[k]), afterK);
-          const newCost =
-            cost(beforeI, idx(order[k])) + cost(idx(order[i]), afterK);
+          const afterK = k === n - 1 ? null : idx(order[k + 1]);
 
-          if (newCost < currentCost - 1e-9) {
+          let currentCost = cost(beforeI, idx(order[i]));
+          let newCost = cost(beforeI, idx(order[k]));
+
+          if (afterK !== null) {
+            currentCost += cost(idx(order[k]), afterK);
+            newCost += cost(idx(order[i]), afterK);
+          }
+
+          if (newCost < currentCost - 1e-6) {
             order = [
               ...order.slice(0, i),
               ...order.slice(i, k + 1).reverse(),
@@ -153,7 +186,7 @@ export class RouteOptimizationService {
     return order;
   }
 
-  /** Local search: tries relocating each stop to every other position */
+  /** Or-Opt: tries relocating blocks of 1, 2, or 3 stops to minimize open path cost */
   private static localSearch(
     order: number[],
     cost: (i: number, j: number) => number,
@@ -162,23 +195,26 @@ export class RouteOptimizationService {
     let bestOrder = [...order];
     let bestCost = RouteOptimizationService.tourCost(bestOrder, cost);
 
-    let improved = true;
-    let iterations = 0;
+    for (let blockSize = 3; blockSize >= 1; blockSize--) {
+      let improved = true;
+      let iterations = 0;
 
-    while (improved && iterations < 20) {
-      improved = false;
-      iterations++;
-      for (let i = 0; i < n; i++) {
-        for (let j = 0; j < n; j++) {
-          if (i === j) continue;
-          const candidate = [...bestOrder];
-          const [moved] = candidate.splice(i, 1);
-          candidate.splice(j, 0, moved);
-          const candidateCost = RouteOptimizationService.tourCost(candidate, cost);
-          if (candidateCost < bestCost - 1e-9) {
-            bestCost = candidateCost;
-            bestOrder = candidate;
-            improved = true;
+      while (improved && iterations < 15) {
+        improved = false;
+        iterations++;
+        for (let i = 0; i <= n - blockSize; i++) {
+          for (let j = 0; j <= n - blockSize; j++) {
+            if (i === j) continue;
+            const candidate = [...bestOrder];
+            const block = candidate.splice(i, blockSize);
+            candidate.splice(j, 0, ...block);
+            const candidateCost = RouteOptimizationService.tourCost(candidate, cost);
+
+            if (candidateCost < bestCost - 1e-6) {
+              bestCost = candidateCost;
+              bestOrder = candidate;
+              improved = true;
+            }
           }
         }
       }
@@ -187,7 +223,7 @@ export class RouteOptimizationService {
     return bestOrder;
   }
 
-  /** Total tour cost: depot → stops → depot (or destination) */
+  /** Total open path cost: depot → stop 1 → stop 2 → ... → stop N (no return to depot) */
   private static tourCost(
     order: number[],
     cost: (i: number, j: number) => number,
@@ -198,7 +234,6 @@ export class RouteOptimizationService {
       total += cost(prev, stop + 1);
       prev = stop + 1;
     }
-    total += cost(prev, 0); // return to depot
     return total;
   }
 }

@@ -1,17 +1,21 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer } from '@react-navigation/native';
-import HomeScreen from '../screens/Home/HomeScreen';
-import ImportScreen from '../screens/Deliveries/ImportScreen';
-import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
 import MapScreen from '../screens/Map/MapScreen';
+import ImportScreen from '../screens/Deliveries/ImportScreen';
+import SettingsScreen from '../screens/Settings/SettingsScreen';
+import HomeScreen from '../screens/Home/HomeScreen';
+import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
+import DiagnosticScreen from '../screens/Deliveries/DiagnosticScreen';
 import { colors } from '../theme';
 
 export type RootStackParamList = {
-  Home: undefined;
-  Import: undefined;
-  Deliveries: undefined;
   Map: undefined;
+  Import: undefined;
+  Settings: undefined;
+  Home: undefined;
+  Deliveries: undefined;
+  Diagnostic: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -20,7 +24,7 @@ export function Navigation() {
   return (
     <NavigationContainer>
       <Stack.Navigator
-        initialRouteName="Home"
+        initialRouteName="Map"
         screenOptions={{
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.primary,
@@ -35,8 +39,8 @@ export function Navigation() {
         }}
       >
         <Stack.Screen
-          name="Home"
-          component={HomeScreen}
+          name="Map"
+          component={MapScreen}
           options={{ headerShown: false }}
         />
         <Stack.Screen
@@ -45,14 +49,23 @@ export function Navigation() {
           options={{ title: 'Importar Planilha' }}
         />
         <Stack.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
           name="Deliveries"
           component={DeliveriesScreen}
-          options={{ title: 'Entregas' }}
+          options={{ title: 'Entregas', headerShown: false }}
         />
-        {/* MapScreen fica 100% tela cheia de borda a borda */}
         <Stack.Screen
-          name="Map"
-          component={MapScreen}
+          name="Diagnostic"
+          component={DiagnosticScreen}
           options={{ headerShown: false }}
         />
       </Stack.Navigator>

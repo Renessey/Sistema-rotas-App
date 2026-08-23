@@ -33,6 +33,8 @@ import { ValhallaService } from '../../services/routing/ValhallaService';
 import { spacing, radius, shadows, typography } from '../../theme';
 import { useTheme } from '../../theme/ThemeContext';
 
+import { BottomNavBar } from '../../components/Navigation/BottomNavBar';
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -80,17 +82,7 @@ export default function HomeScreen({ navigation }: Props) {
   const checkConnectivity = useCallback(async () => {
     const tiles = await ValhallaService.tilesReady();
     setOfflineOk(tiles.installed);
-    try {
-      const r = await fetch('https://valhalla1.openstreetmap.de', { signal: AbortSignal.timeout(3000) });
-      setRouterOnline(r.ok || r.status < 500);
-    } catch {
-      try {
-        const r2 = await fetch('https://router.project-osrm.org', { signal: AbortSignal.timeout(3000) });
-        setRouterOnline(r2.ok || r2.status < 500);
-      } catch {
-        setRouterOnline(false);
-      }
-    }
+    setRouterOnline(true);
   }, []);
 
   useEffect(() => {
@@ -112,44 +104,46 @@ export default function HomeScreen({ navigation }: Props) {
   const progress = stats.total > 0 ? stats.completed / stats.total : 0;
 
   return (
-    <ScrollView
-      style={screen.scroll}
-      contentContainerStyle={[
-        screen.content,
-        {
-          paddingTop: Math.max(insets.top, spacing.md),
-          paddingBottom: Math.max(insets.bottom, spacing.xl),
-        },
-      ]}
-      showsVerticalScrollIndicator={false}
-      bounces={false}
-    >
-      <Animated.View
-        style={[screen.inner, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScrollView
+        style={screen.scroll}
+        contentContainerStyle={[
+          screen.content,
+          {
+            paddingTop: Math.max(insets.top, spacing.md),
+            paddingBottom: spacing.xxl,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
       >
-        {/* ① Header */}
-        <AppHeader />
+        <Animated.View
+          style={[screen.inner, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+        >
+          {/* ① Header */}
+          <AppHeader />
 
-        {/* ② GPS */}
-        <GpsCard
-          locationText={locationText}
-          accuracy={gpsAccuracy}
-          onPress={checkLocation}
-        />
+          {/* ② GPS */}
+          <GpsCard
+            locationText={locationText}
+            accuracy={gpsAccuracy}
+            onPress={checkLocation}
+          />
 
-        {/* ③ Stats — só mostra com dados */}
-        {stats.total > 0 && <StatsGrid stats={stats} />}
+          {/* ③ Stats — só mostra com dados */}
+          {stats.total > 0 && <StatsGrid stats={stats} />}
 
-        {/* ④ Progresso — só mostra com dados */}
-        {stats.total > 0 && <ProgressCard completed={stats.completed} total={stats.total} progress={progress} />}
+          {/* ④ Progresso — só mostra com dados */}
+          {stats.total > 0 && <ProgressCard completed={stats.completed} total={stats.total} progress={progress} />}
 
-        {/* ⑤ Conectividade */}
-        <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
+          {/* ⑤ Conectividade */}
+          <ConnectivityRow routerOnline={routerOnline} offlineOk={offlineOk} />
 
-        {/* ⑥ Ações */}
-        <QuickActions stats={stats} navigation={navigation} onDeleted={refreshStats} />
-      </Animated.View>
-    </ScrollView>
+          {/* ⑥ Ações */}
+          <QuickActions stats={stats} navigation={navigation} onDeleted={refreshStats} />
+        </Animated.View>
+      </ScrollView>
+    </View>
   );
 }
 
@@ -387,12 +381,11 @@ interface ConnectivityRowProps {
 function ConnectivityRow({ routerOnline, offlineOk }: ConnectivityRowProps) {
   const { colors } = useTheme();
   const conn = React.useMemo(() => createConnStyles(colors), [colors]);
-  const status =
-    routerOnline === null
-      ? { color: colors.textMuted, label: 'Verificando conectividade…', icon: '🔄' }
-      : routerOnline
-      ? { color: colors.success, label: 'Roteirização Online',           icon: '✅' }
-      : { color: colors.warning, label: 'Sem Internet — rotas aprox.',   icon: '⚠️' };
+  const status = {
+    color: colors.success,
+    label: 'Valhalla 100% Offline (Maricá, Niterói, SG)',
+    icon: '⚡',
+  };
 
   return (
     <View style={[conn.row, { borderColor: status.color + '44' }]}>
@@ -616,11 +609,11 @@ function DeleteSpreadsheetModal({
             </View>
           )}
 
-          {/* Google Quota Safety Notice */}
+          {/* Offline Database Notice */}
           <View style={dm.noticeBox}>
             <Text style={dm.noticeIcon}>💡</Text>
             <Text style={dm.noticeText}>
-              A cota diária do Google Geocoding usada hoje não é afetada.
+              Os registros serão apagados do banco de dados local SQLite.
             </Text>
           </View>
 

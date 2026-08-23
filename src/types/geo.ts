@@ -44,16 +44,29 @@ export interface GpsPosition {
   timestamp: number;
 }
 
-/* ------------------------- Delivery entity ------------------------- */
+/* ------------------------- Delivery List Entity (Multi-List Batch) ------------------------- */
+
+export interface DeliveryListEntity {
+  id: number;
+  name: string; // Ex: "Lista 1", "Lista 2", "Romaneio Maricá"
+  fileName?: string | null;
+  totalDeliveries: number;
+  completedDeliveries: number;
+  pendingDeliveries: number;
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/* ------------------------- Delivery Entity (Official Offline Model) ------------------------- */
 
 export type DeliveryStatus =
   | 'pending'
   | 'optimized'
   | 'in_progress'
   | 'completed'
-  | 'failed';
-
-export type GeocodingStatus = 'pending' | 'geocoding' | 'success' | 'failed';
+  | 'failed'
+  | 'invalid_coords';
 
 export type FailReason =
   | 'absent'
@@ -65,47 +78,63 @@ export type FailReason =
 
 export interface DeliveryEntity {
   id: number;
-  name: string;
-  address: string;
-  number: string;
-  complement: string;
-  neighborhood: string;
-  city: string;
-  state: string;
-  cep: string;
-  phone: string;
-  orderCode: string;
-  latitude: number | null;
-  longitude: number | null;
-  snappedLatitude: number | null;
-  snappedLongitude: number | null;
-  geocodingStatus: GeocodingStatus;
-  geocodingSource: string | null;   // 'brasilapi' | 'viacep' | 'nominatim' | 'photon' | 'manual' | 'spreadsheet'
-  routingStatus: 'pending' | 'routed' | 'failed';
-  sequence: number | null;
-  distance: number | null;
-  duration: number | null;
+  listId?: number | null;      // ID da lista/lote a qual pertence (ex: Lista 1, Lista 2)
+  destination: string;         // Texto original da planilha (delivery.destination)
+  bairro: string;              // Texto original da planilha (delivery.bairro)
+  city: string;                // Texto original da planilha (delivery.city)
+  zipCode: string;             // ZipCode ou Postal Code (delivery.zipCode)
+  latitude: number | null;     // Valor numérico exato de Latitude
+  longitude: number | null;    // Valor numérico exato de Longitude
+  rawLatitude: string | null;  // Valor original textual da planilha
+  rawLongitude: string | null; // Valor original textual da planilha
+  pedido: string | null;       // Código do pedido
+  telefone: string | null;     // Telefone / WhatsApp
   status: DeliveryStatus;
-  failReason: FailReason;
-  notes: string | null;
-  deliveredAt: number | null;       // unix timestamp ms
-  createdAt: number | null;
-  originalData?: string | null;     // JSON string com dados brutos da linha
+  ordem: number | null;        // Posição ordenada na rota
+  distancia: number | null;    // Distância calculada (m)
+  tempoEstimado: number | null;// Tempo estimado de viagem (s)
+  failReason?: FailReason;
+  notes?: string | null;
+  deliveredAt?: number | null; // Unix timestamp (ms)
+  createdAt: number;
+  updatedAt?: number;
+  originalData?: string | null;// JSON com os dados brutos da linha
+  
+  // Campos de compatibilidade para visualização
+  name?: string;
+  address?: string;
+  number?: string;
+  complement?: string;
+  neighborhood?: string;
+  state?: string;
+  cep?: string;
+  phone?: string;
+  orderCode?: string;
+  sequence?: number | null;
+  duration?: number | null;
+  distance?: number | null;
+  snappedLatitude?: number | null;
+  snappedLongitude?: number | null;
 }
 
 export interface ColumnMappingConfig {
-  nameCol?: string;
-  addressCols: string[];
+  destinationCol?: string;
+  bairroCol?: string;
+  cityCol?: string;
+  zipCodeCol?: string;
   latitudeCol?: string;
   longitudeCol?: string;
+  pedidoCol?: string;
   phoneCol?: string;
-  orderCodeCol?: string;
   notesCol?: string;
+  nameCol?: string;
+  addressCols?: string[];
+  orderCodeCol?: string;
 }
 
 /* ------------------------- Valhalla types ------------------------- */
 
-export type Costing = 'auto' | 'bicycle' | 'pedestrian' | 'bus' | 'truck';
+export type Costing = 'auto' | 'motorcycle' | 'bicycle' | 'pedestrian' | 'bus' | 'truck';
 
 export interface SnappedPoint {
   /** original coordinate, never replaced */
@@ -125,7 +154,7 @@ export interface MatrixResult {
   durations: number[][];
   /** distances[i][j] in meters */
   distances: number[][];
-  /** true when the real road network was used (native Valhalla) */
+  /** true when road network was used */
   fromRoadNetwork: boolean;
 }
 
@@ -136,50 +165,30 @@ export interface RouteResult {
   fromRoadNetwork: boolean;
 }
 
-/** Bearing+radius used for snapping (Phase 7) */
-export interface SnapBearing {
-  /** degrees, when reliable */
-  value: number | null;
-  /** degrees of uncertainty */
-  tolerance?: number;
-  /** whether the bearing passed the confidence check */
-  reliable: boolean;
-}
-
 export interface SnapOptions {
   radius?: number;
   bearing?: number | null;
   bearingTolerance?: number;
 }
 
-/** GPS_SNAP_RADIUS / GPS_MIN_BEARING_CONFIDENCE config */
-export const SNAP_CONFIG = {
-  GPS_SNAP_RADIUS: 50,                // meters — max distance to consider snapping
-  GPS_MIN_BEARING_CONFIDENCE: 0.5,    // min heading reliability to use bearing
-  MIN_BEARING_SPEED: 1.5,             // m/s — below this, vehicle is "stopped", bearing ignored
-} as const;
-
-/* ------------------------- Geocoding types ------------------------- */
-
-export type GeocodingProvider =
-  | 'spreadsheet'
-  | 'google'
-  | 'maptiler'
-  | 'brasilapi'
-  | 'viacep+nominatim'
-  | 'nominatim'
-  | 'photon'
-  | 'cache'
-  | 'manual';
+export type ExternalNavApp = 'waze' | 'google_maps' | 'apple_maps';
 
 export interface GeocodeResult {
   latitude: number;
   longitude: number;
-  confidence: 'high' | 'medium' | 'low';
-  provider: GeocodingProvider;
+  provider: string;
+  accuracy?: number;
+  confidence?:
+    | 'ROOFTOP'
+    | 'RANGE_INTERPOLATED'
+    | 'GEOMETRIC_CENTER'
+    | 'APPROXIMATE'
+    | 'high'
+    | 'medium'
+    | 'low'
+    | 'exact'
+    | 'fallback'
+    | 'spreadsheet'
+    | string;
   formattedAddress?: string;
 }
-
-/* ------------------------- Navigation types ------------------------- */
-
-export type ExternalNavApp = 'waze' | 'google_maps' | 'apple_maps';

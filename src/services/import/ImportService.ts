@@ -2,7 +2,12 @@ import * as XLSX from 'xlsx';
 import { pick, keepLocalCopy, types } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
 import type { ColumnMappingConfig, DeliveryEntity } from '../../types/geo';
-import { buildAddressQuery } from '../../utils/columnMappingHeuristics';
+import {
+  parseCoordinatePair,
+  detectStandardColumns,
+  normalizeColumnName,
+  ImportConversionReport,
+} from '../../utils/coordinateParser';
 
 export interface ParsedSpreadsheet {
   headers: string[];
@@ -63,20 +68,19 @@ function detectSeparator(text: string): CsvOptions['separator'] {
 }
 
 /** Removes BOM and normalizes accents/whitespace */
-function normalizeText(value: string): string {
-  return value
+function cleanText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
     .replace(/^\uFEFF/, '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .replace(/\s+/g, ' ');
+    .trim();
 }
 
 /**
- * ImportService — Phases 8 & 9.
- * - picks .xlsx / .csv files
- * - reads workbook / detects CSV encoding, separator and header
- * - auto-detects columns and normalizes into DeliveryEntity rows
+ * ImportService — 100% Offline (Fases 3, 4, 5, 6, 7, 8).
+ *
+ * Lê planilhas XLSX e CSV sem internet, extrai as colunas oficiais:
+ * Destination, Bairro, City, ZipCode/Postal Code, Latitude, Longitude, Pedido, Telefone.
+ * Preserva integralmente a precisão das coordenadas e gera relatório de verificação.
  */
 export class ImportService {
   static async pickAndParseSpreadsheet(): Promise<ParsedSpreadsheet | null> {
@@ -90,7 +94,7 @@ export class ImportService {
       if (!results || results.length === 0) return null;
       const file = results[0];
 
-      // Copy to app cache so we can read the file reliably
+      // Copia para o cache local do app
       const copies = await keepLocalCopy({
         files: [{ uri: file.uri, fileName: file.name ?? 'import.xlsx' }],
         destination: 'cachesDirectory',
@@ -100,7 +104,6 @@ export class ImportService {
         throw new Error('Não foi possível copiar o arquivo selecionado.');
       }
 
-      // keepLocalCopy returns a file:// URI; RNFS expects a plain path
       const localPath = local.localUri.replace(/^file:\/\//, '');
       const fileName = file.name ?? 'planilha.xlsx';
       const isCsv = fileName.toLowerCase().endsWith('.csv') || fileName.toLowerCase().endsWith('.txt');
@@ -127,11 +130,6 @@ export class ImportService {
     }
   }
 
-  static async pickAndReadSpreadsheet(): Promise<Record<string, unknown>[]> {
-    const parsed = await ImportService.pickAndParseSpreadsheet();
-    return parsed ? parsed.rows : [];
-  }
-
   private static async readWorkbook(filePath: string): Promise<Record<string, unknown>[]> {
     const base64 = await RNFS.readFile(filePath, 'base64');
     const workbook = XLSX.read(base64, { type: 'base64' });
@@ -139,18 +137,19 @@ export class ImportService {
     const worksheet = workbook.Sheets[firstSheetName];
     return XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
       defval: '',
+      raw: true, // lê valores brutos para evitar truncamento do xlsx
     });
   }
 
   private static async readCsv(filePath: string): Promise<Record<string, unknown>[]> {
     let text = await RNFS.readFile(filePath, 'utf8');
-    text = text.replace(/^\uFEFF/, ''); // strip BOM (UTF-8)
+    text = text.replace(/^\uFEFF/, ''); // strip BOM
     const separator = detectSeparator(text);
 
     const rows = parseCsv(text, separator);
     if (rows.length < 2) return [];
 
-    const headers = rows[0].map((h) => normalizeText(h));
+    const headers = rows[0].map((h) => cleanText(h));
     const dataRows = rows.slice(1);
 
     return dataRows.map((cells) => {
@@ -162,155 +161,166 @@ export class ImportService {
     });
   }
 
-  /** Normalizes spreadsheet columns into DeliveryEntity rows (auto-detect headers). */
-  static normalizeRows(rows: Record<string, unknown>[]): Omit<DeliveryEntity, 'id'>[] {
-    return rows.map((row) => {
-      const normalized: Record<string, unknown> = {};
-
-      for (const [key, val] of Object.entries(row)) {
-        const cleanKey = normalizeText(String(key)).toLowerCase();
-        const stringVal = val !== undefined && val !== null ? String(val).trim() : '';
-
-        if (cleanKey.includes('nome') || cleanKey.includes('cliente') || cleanKey.includes('destinatario') || cleanKey.includes('razao'))
-          normalized.name = stringVal;
-        else if (cleanKey.includes('endereco') || cleanKey.includes('rua') || cleanKey.includes('logradouro') || cleanKey.includes('destination adress') || cleanKey.includes('destination address'))
-          normalized.address = stringVal;
-        else if (cleanKey === 'numero' || cleanKey.includes('nº') || cleanKey.includes('num'))
-          normalized.number = stringVal;
-        else if (cleanKey.includes('complemento') || cleanKey === 'comp') normalized.complement = stringVal;
-        else if (cleanKey.includes('bairro') || cleanKey.includes('neighborhood')) normalized.neighborhood = stringVal;
-        else if (cleanKey.includes('cidade') || cleanKey.includes('municipio') || cleanKey.includes('city')) normalized.city = stringVal;
-        else if (cleanKey.includes('estado') || cleanKey === 'uf') normalized.state = stringVal;
-        else if (cleanKey.includes('cep') || cleanKey.includes('codigo postal') || cleanKey.includes('zipcode') || cleanKey.includes('zip')) normalized.cep = stringVal;
-        else if (cleanKey.includes('telefone') || cleanKey.includes('celular') || cleanKey === 'tel' || cleanKey.includes('phone') || cleanKey.includes('whatsapp'))
-          normalized.phone = stringVal;
-        else if (cleanKey.includes('pedido') || cleanKey.includes('codigo da entrega') || cleanKey.includes('order') || cleanKey.includes('codigo'))
-          normalized.orderCode = stringVal;
-        else if (cleanKey.includes('sequence') || cleanKey.includes('sequencia')) {
-          const num = parseInt(stringVal, 10);
-          normalized.sequence = !isNaN(num) ? num : null;
-        }
-        else if (cleanKey.includes('observacao') || cleanKey.includes('obs') || cleanKey.includes('nota') || cleanKey.includes('notes') || cleanKey.includes('corridor cage')) {
-          normalized.notes = stringVal;
-        }
-        else if (cleanKey === 'latitude' || cleanKey === 'lat' || cleanKey.startsWith('lat_') || cleanKey.startsWith('latitude') || cleanKey.includes('latitude') || cleanKey === 'latitud') {
-          const num = parseFloat(stringVal.replace(',', '.').trim());
-          if (!isNaN(num) && num >= -90 && num <= 90) normalized.latitude = num;
-        } else if (cleanKey === 'longitude' || cleanKey === 'lon' || cleanKey === 'lng' || cleanKey === 'long' || cleanKey.startsWith('lng_') || cleanKey.startsWith('lon_') || cleanKey.startsWith('long_') || cleanKey.startsWith('longitude') || cleanKey.includes('longitude') || cleanKey === 'longitud') {
-          const num = parseFloat(stringVal.replace(',', '.').trim());
-          if (!isNaN(num) && num >= -180 && num <= 180) normalized.longitude = num;
-        }
-      }
-
-      const hasCoords =
-        typeof normalized.latitude === 'number' && typeof normalized.longitude === 'number';
-
+  /**
+   * Converte linhas da planilha em DeliveryEntity aplicando detecção automática de colunas oficiais.
+   */
+  static normalizeRows(rows: Record<string, unknown>[]): {
+    deliveries: Omit<DeliveryEntity, 'id'>[];
+    report: ImportConversionReport;
+  } {
+    if (rows.length === 0) {
       return {
-        name: (normalized.name as string) || 'Cliente sem nome',
-        address: (normalized.address as string) || '',
-        number: (normalized.number as string) || '',
-        complement: (normalized.complement as string) || '',
-        neighborhood: (normalized.neighborhood as string) || '',
-        city: (normalized.city as string) || '',
-        state: (normalized.state as string) || '',
-        cep: (normalized.cep as string) || '',
-        phone: (normalized.phone as string) || '',
-        orderCode: (normalized.orderCode as string) || '',
-        latitude: hasCoords ? (normalized.latitude as number) : null,
-        longitude: hasCoords ? (normalized.longitude as number) : null,
-        snappedLatitude: null,
-        snappedLongitude: null,
-        geocodingStatus: hasCoords ? 'success' : 'pending',
-        geocodingSource: hasCoords ? 'spreadsheet' : null,
-        routingStatus: 'pending',
-        sequence: (normalized.sequence as number) ?? null,
-        distance: null,
-        duration: null,
-        status: 'pending',
-        failReason: null,
-        notes: (normalized.notes as string) || null,
-        deliveredAt: null,
-        createdAt: Date.now(),
-        originalData: JSON.stringify(row),
+        deliveries: [],
+        report: {
+          totalRows: 0,
+          validCoordsCount: 0,
+          invalidCoordsCount: 0,
+          suspiciousCoordsCount: 0,
+          missingCoordsCount: 0,
+        },
       };
-    });
+    }
+
+    const headers = Object.keys(rows[0]);
+    const detected = detectStandardColumns(headers);
+
+    return ImportService.processRowsWithCols(rows, detected);
   }
 
   /**
-   * Converte as linhas brutas da planilha em DeliveryEntity usando o mapeamento configurado pelo usuário.
+   * Converte linhas brutas da planilha usando mapeamento configurado ou detectado.
    */
   static applyMapping(
     rows: Record<string, unknown>[],
     mapping: ColumnMappingConfig,
-  ): Omit<DeliveryEntity, 'id'>[] {
-    return rows.map((row, index) => {
-      // Nome/Título: Usado APENAS como label/marcador no mapa
-      const name = mapping.nameCol && row[mapping.nameCol] !== undefined
-        ? String(row[mapping.nameCol] ?? '').trim()
-        : '';
-
-      // Endereço: Extraído EXCLUSIVAMENTE das colunas de endereço (nome NUNCA entra na URL de geocodificação)
-      const cleanAddressCols = (mapping.addressCols || []).filter(
-        (col) => col !== mapping.nameCol && col !== mapping.latitudeCol && col !== mapping.longitudeCol,
-      );
-      const addressQuery = buildAddressQuery(row, cleanAddressCols);
-
-      let lat: number | null = null;
-      let lng: number | null = null;
-
-      if (mapping.latitudeCol && row[mapping.latitudeCol] !== undefined && row[mapping.latitudeCol] !== null) {
-        const parsedLat = parseFloat(String(row[mapping.latitudeCol]).replace(',', '.').trim());
-        if (!isNaN(parsedLat) && parsedLat >= -90 && parsedLat <= 90) lat = parsedLat;
-      }
-
-      if (mapping.longitudeCol && row[mapping.longitudeCol] !== undefined && row[mapping.longitudeCol] !== null) {
-        const parsedLng = parseFloat(String(row[mapping.longitudeCol]).replace(',', '.').trim());
-        if (!isNaN(parsedLng) && parsedLng >= -180 && parsedLng <= 180) lng = parsedLng;
-      }
-
-      const phone = mapping.phoneCol && row[mapping.phoneCol] !== undefined
-        ? String(row[mapping.phoneCol] ?? '').trim()
-        : '';
-
-      const orderCode = mapping.orderCodeCol && row[mapping.orderCodeCol] !== undefined
-        ? String(row[mapping.orderCodeCol] ?? '').trim()
-        : '';
-
-      const notes = mapping.notesCol && row[mapping.notesCol] !== undefined
-        ? String(row[mapping.notesCol] ?? '').trim()
-        : null;
-
-      const hasCoords = lat !== null && lng !== null && (lat !== 0 || lng !== 0);
-
-      return {
-        name: name || `Entrega #${index + 1}`,
-        address: addressQuery,
-        number: '',
-        complement: '',
-        neighborhood: '',
-        city: '',
-        state: '',
-        cep: '',
-        phone,
-        orderCode,
-        latitude: hasCoords ? lat : null,
-        longitude: hasCoords ? lng : null,
-        snappedLatitude: null,
-        snappedLongitude: null,
-        geocodingStatus: hasCoords ? 'success' : 'pending',
-        geocodingSource: hasCoords ? 'spreadsheet' : null,
-        routingStatus: 'pending',
-        sequence: index + 1,
-        distance: null,
-        duration: null,
-        status: 'pending',
-        failReason: null,
-        notes: notes || null,
-        deliveredAt: null,
-        createdAt: Date.now(),
-        originalData: JSON.stringify(row),
-      };
+  ): {
+    deliveries: Omit<DeliveryEntity, 'id'>[];
+    report: ImportConversionReport;
+  } {
+    return ImportService.processRowsWithCols(rows, {
+      destinationCol: mapping.destinationCol || mapping.nameCol,
+      bairroCol: mapping.bairroCol,
+      cityCol: mapping.cityCol,
+      zipCodeCol: mapping.zipCodeCol,
+      latitudeCol: mapping.latitudeCol,
+      longitudeCol: mapping.longitudeCol,
+      pedidoCol: mapping.pedidoCol || mapping.orderCodeCol,
+      phoneCol: mapping.phoneCol,
+      notesCol: mapping.notesCol,
     });
   }
-}
 
+  private static processRowsWithCols(
+    rows: Record<string, unknown>[],
+    cols: {
+      destinationCol?: string;
+      bairroCol?: string;
+      cityCol?: string;
+      zipCodeCol?: string;
+      latitudeCol?: string;
+      longitudeCol?: string;
+      pedidoCol?: string;
+      phoneCol?: string;
+      notesCol?: string;
+    },
+  ): {
+    deliveries: Omit<DeliveryEntity, 'id'>[];
+    report: ImportConversionReport;
+  } {
+    let validCoordsCount = 0;
+    let invalidCoordsCount = 0;
+    let suspiciousCoordsCount = 0;
+    let missingCoordsCount = 0;
+
+    const deliveries: Omit<DeliveryEntity, 'id'>[] = rows.map((row, index) => {
+      // 1. Destination (Texto original preservado)
+      const destination = cols.destinationCol && row[cols.destinationCol] !== undefined
+        ? cleanText(row[cols.destinationCol])
+        : `Entrega #${index + 1}`;
+
+      // 2. Bairro (Texto original preservado)
+      const bairro = cols.bairroCol && row[cols.bairroCol] !== undefined
+        ? cleanText(row[cols.bairroCol])
+        : '';
+
+      // 3. City (Texto original preservado)
+      const city = cols.cityCol && row[cols.cityCol] !== undefined
+        ? cleanText(row[cols.cityCol])
+        : '';
+
+      // 4. ZipCode / Postal Code (Sem duplicar)
+      let zipCode = '';
+      if (cols.zipCodeCol && row[cols.zipCodeCol] !== undefined) {
+        zipCode = cleanText(row[cols.zipCodeCol]);
+      }
+
+      // 5. Coordenadas brutas
+      const rawLat = cols.latitudeCol ? row[cols.latitudeCol] : undefined;
+      const rawLon = cols.longitudeCol ? row[cols.longitudeCol] : undefined;
+
+      // 6. Conversão e validação exata
+      const coordResult = parseCoordinatePair(rawLat, rawLon);
+
+      if (rawLat === undefined || rawLon === undefined || rawLat === '' || rawLon === '') {
+        missingCoordsCount++;
+      } else if (coordResult.isValid) {
+        validCoordsCount++;
+        if (coordResult.isSuspicious) suspiciousCoordsCount++;
+      } else {
+        invalidCoordsCount++;
+      }
+
+      // 7. Pedido, Telefone, Notas
+      const pedido = cols.pedidoCol && row[cols.pedidoCol] !== undefined
+        ? cleanText(row[cols.pedidoCol])
+        : null;
+
+      const telefone = cols.phoneCol && row[cols.phoneCol] !== undefined
+        ? cleanText(row[cols.phoneCol])
+        : null;
+
+      const notes = cols.notesCol && row[cols.notesCol] !== undefined
+        ? cleanText(row[cols.notesCol])
+        : null;
+
+      return {
+        destination: destination || `Entrega #${index + 1}`,
+        bairro,
+        city,
+        zipCode,
+        latitude: coordResult.latitude,
+        longitude: coordResult.longitude,
+        rawLatitude: coordResult.rawLatitude,
+        rawLongitude: coordResult.rawLongitude,
+        pedido,
+        telefone,
+        status: coordResult.isValid ? 'pending' : 'invalid_coords',
+        ordem: index + 1,
+        distancia: null,
+        tempoEstimado: null,
+        failReason: coordResult.isValid ? null : 'wrong_address',
+        notes: coordResult.errorReason ? `Aviso: ${coordResult.errorReason}${notes ? ' | ' + notes : ''}` : notes,
+        deliveredAt: null,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        originalData: JSON.stringify(row),
+        name: destination || `Entrega #${index + 1}`,
+        address: [destination, bairro, city].filter(Boolean).join(' - '),
+        phone: telefone || '',
+        orderCode: pedido || '',
+        sequence: index + 1,
+      };
+    });
+
+    return {
+      deliveries,
+      report: {
+        totalRows: rows.length,
+        validCoordsCount,
+        invalidCoordsCount,
+        suspiciousCoordsCount,
+        missingCoordsCount,
+      },
+    };
+  }
+}

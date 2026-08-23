@@ -123,11 +123,11 @@ export const shadows = {
   }),
 };
 
-// Status delivery badge config
 export const statusConfig = {
-  pending:     { color: colors.textMuted,  bg: colors.border,        label: 'Pendente',    icon: '⏳' },
-  optimized:   { color: colors.primary,    bg: colors.primaryGhost,  label: 'Roteirizado', icon: '🗺️' },
-  in_progress: { color: colors.warning,    bg: colors.warningGhost,  label: 'Em Rota',     icon: '🚚' },
-  completed:   { color: colors.success,    bg: colors.successGhost,  label: 'Entregue',    icon: '✅' },
-  failed:      { color: colors.danger,     bg: colors.dangerGhost,   label: 'Insucesso',   icon: '❌' },
+  pending:        { color: colors.textMuted,  bg: colors.border,        label: 'Pendente',       icon: '⏳' },
+  optimized:      { color: colors.primary,    bg: colors.primaryGhost,  label: 'Roteirizado',    icon: '🗺️' },
+  in_progress:    { color: colors.warning,    bg: colors.warningGhost,  label: 'Em Rota',        icon: '🚚' },
+  completed:      { color: colors.success,    bg: colors.successGhost,  label: 'Entregue',       icon: '✅' },
+  failed:         { color: colors.danger,     bg: colors.dangerGhost,   label: 'Insucesso',      icon: '❌' },
+  invalid_coords: { color: colors.danger,     bg: colors.dangerGhost,   label: 'Sem Coordenada', icon: '⚠️' },
 } as const;
