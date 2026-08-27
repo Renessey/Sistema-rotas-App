@@ -10,11 +10,12 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { ValhallaService } from '../services/routing/ValhallaService';
 import { DatabaseService } from '../storage/DatabaseService';
 import { parseCoordinatePair } from '../utils/coordinateParser';
-import { colors, spacing, radius, shadows, typography } from '../theme';
+import { spacing, radius, shadows, typography } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 import type { DeliveryEntity } from '../types/geo';
+import { X, Plus, Save } from 'lucide-react-native';
 
 interface Props {
   visible: boolean;
@@ -47,6 +48,8 @@ const emptyForm = (): FormState => ({
 });
 
 export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
+  const { colors } = useTheme();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const [form, setForm] = useState<FormState>(emptyForm());
   const [loading, setLoading] = useState(false);
 
@@ -138,9 +141,12 @@ export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
           <View style={styles.handle} />
 
           <View style={styles.header}>
-            <Text style={styles.title}>➕ Nova Entrega Offline</Text>
+            <View style={styles.headerTitleWrap}>
+              <Plus size={18} color={colors.primary} />
+              <Text style={styles.title}>Nova Entrega</Text>
+            </View>
             <Pressable onPress={handleClose} style={styles.closeBtn}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <X size={16} color={colors.textMuted} />
             </Pressable>
           </View>
 
@@ -240,7 +246,10 @@ export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
               {loading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.saveBtnText}>💾 Salvar Entrega</Text>
+                <View style={styles.saveBtnRow}>
+                  <Save size={16} color="#FFFFFF" />
+                  <Text style={styles.saveBtnText}>Salvar Entrega</Text>
+                </View>
               )}
             </Pressable>
           </ScrollView>
@@ -249,6 +258,7 @@ export function AddDeliveryModal({ visible, onClose, onSaved }: Props) {
     </Modal>
   );
 }
+
 
 function Field({
   label,
@@ -265,6 +275,9 @@ function Field({
   keyboardType?: any;
   multiline?: boolean;
 }) {
+  const { colors } = useTheme();
+  const fieldStyles = React.useMemo(() => createFieldStyles(colors), [colors]);
+
   return (
     <View style={fieldStyles.container}>
       <Text style={fieldStyles.label}>{label}</Text>
@@ -282,62 +295,74 @@ function Field({
   );
 }
 
-const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
-  sheet: {
-    backgroundColor: colors.surface,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    maxHeight: '92%',
-    ...shadows.xl,
-  },
-  handle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: radius.full,
-    marginTop: spacing.md,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: { ...typography.title, color: colors.text },
-  closeBtn: { padding: spacing.xs },
-  closeBtnText: { fontSize: 18, color: colors.textMuted },
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    overlay: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      maxHeight: '92%',
+      ...shadows.xl,
+    },
+    handle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      backgroundColor: colors.border,
+      borderRadius: radius.full,
+      marginTop: spacing.md,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: spacing.xl,
+      paddingVertical: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerTitleWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs + 2,
+    },
+    title: { ...typography.title, color: colors.text },
+    closeBtn: { padding: spacing.xs },
 
-  form: { padding: spacing.xl, gap: spacing.md, paddingBottom: spacing.xxxl },
-  twoCol: { flexDirection: 'row', gap: spacing.sm },
+    form: { padding: spacing.xl, gap: spacing.md, paddingBottom: spacing.xxxl },
+    twoCol: { flexDirection: 'row', gap: spacing.sm },
 
-  saveBtn: {
-    backgroundColor: colors.primary,
-    borderRadius: radius.md,
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-    marginTop: spacing.sm,
-    ...shadows.colored(colors.primary),
-  },
-  saveBtnText: { color: '#fff', ...typography.titleSmall, fontWeight: '700' },
-});
+    saveBtn: {
+      backgroundColor: colors.primary,
+      borderRadius: radius.md,
+      paddingVertical: spacing.lg,
+      alignItems: 'center',
+      marginTop: spacing.sm,
+      ...shadows.colored(colors.primary),
+    },
+    saveBtnRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs + 2,
+    },
+    saveBtnText: { color: '#fff', ...typography.titleSmall, fontWeight: '700' },
+  });
 
-const fieldStyles = StyleSheet.create({
-  container: { gap: spacing.xs },
-  label: { ...typography.label, color: colors.textMuted },
-  input: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    ...typography.body,
-    color: colors.text,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  inputMulti: { minHeight: 70, textAlignVertical: 'top', paddingTop: spacing.sm },
-});
+const createFieldStyles = (colors: any) =>
+  StyleSheet.create({
+    container: { gap: spacing.xs },
+    label: { ...typography.label, color: colors.textMuted },
+    input: {
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      ...typography.body,
+      color: colors.text,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    inputMulti: { minHeight: 70, textAlignVertical: 'top', paddingTop: spacing.sm },
+  });
+

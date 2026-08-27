@@ -1,5 +1,5 @@
 import type { LngLat } from '../../types/geo';
-import { ValhallaService } from './ValhallaService';
+import { RoutingService } from './RoutingService';
 
 export interface OptimizationOptions {
   /** optional final destination after all stops */
@@ -24,9 +24,9 @@ export interface OptimizationResult {
  *   2. 2-opt              → remove crossings / improve
  *   3. Local Search       → relocate single stops
  *
- * The cost matrix is provided by Valhalla (real road network). When the road
+ * The cost matrix is provided by Mapbox / OSRM (real road network). When the road
  * matrix is unavailable the solver falls back to haversine costs so the flow
- * still works offline during development.
+ * still works reliably.
  */
 export class RouteOptimizationService {
   /**
@@ -54,7 +54,7 @@ export class RouteOptimizationService {
     const nodes: LngLat[] = [start, ...stops];
     if (options.destination) nodes.push(options.destination);
 
-    const matrix = await ValhallaService.matrix(nodes, nodes);
+    const matrix = await RoutingService.matrix(nodes, nodes);
     const cost = (i: number, j: number) =>
       options.useDuration ? matrix.durations[i][j] : matrix.distances[i][j];
 
@@ -83,7 +83,7 @@ export class RouteOptimizationService {
     b: LngLat,
     useDuration = false,
   ): Promise<number> {
-    const m = await ValhallaService.matrix([a], [b]);
+    const m = await RoutingService.matrix([a], [b]);
     return useDuration ? m.durations[0][0] : m.distances[0][0];
   }
 
@@ -96,7 +96,6 @@ export class RouteOptimizationService {
     let current = 0; // depot / start position
 
     while (order.length < count) {
-      // 1. Find nearest unvisited stop from current
       let best: number | null = null;
       let bestCost = Infinity;
 
@@ -113,32 +112,6 @@ export class RouteOptimizationService {
       visited.add(best);
       order.push(best - 1); // 0-indexed stop
       current = best;
-
-      // 2. Micro-clustering: check if any unvisited stops are nearby in the same condo/street/neighborhood
-      // (Within cluster radius ~1500m or 150s drive)
-      let clusterSearch = true;
-      while (clusterSearch && order.length < count) {
-        let nearestInCluster: number | null = null;
-        let clusterCost = Infinity;
-
-        for (let j = 1; j <= count; j++) {
-          if (visited.has(j)) continue;
-          const c = cost(current, j);
-          // If within ~1500m / 150s and is currently the nearest neighbor in that cluster
-          if (c <= 1500 && c < clusterCost) {
-            clusterCost = c;
-            nearestInCluster = j;
-          }
-        }
-
-        if (nearestInCluster !== null) {
-          visited.add(nearestInCluster);
-          order.push(nearestInCluster - 1);
-          current = nearestInCluster;
-        } else {
-          clusterSearch = false;
-        }
-      }
     }
 
     return order;

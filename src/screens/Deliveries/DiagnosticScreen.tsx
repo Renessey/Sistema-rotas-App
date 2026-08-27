@@ -15,7 +15,20 @@ import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { LocationService } from '../../services/gps/LocationService';
-import { ValhallaService } from '../../services/routing/ValhallaService';
+import { RoutingService } from '../../services/routing/RoutingService';
+import { MapboxService } from '../../services/routing/MapboxService';
+import { MapboxQuota, type MapboxQuotaStatus } from '../../services/routing/MapboxQuota';
+import { RouteCache } from '../../services/routing/RouteCache';
+import {
+  ArrowLeft,
+  RefreshCw,
+  Activity,
+  Radio,
+  HardDrive,
+  Cpu,
+  Map,
+  FlaskConical,
+} from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Diagnostic'>;
 
@@ -42,19 +55,15 @@ export default function DiagnosticScreen({ navigation }: Props) {
     invalidCoords: 0,
   });
 
-  const [valhallaStatus, setValhallaStatus] = useState<{
-    regionId: string;
-    municipalities: string[];
-    bounds: { west: number; south: number; east: number; north: number };
-    tilesInstalled: boolean;
-    engineAvailable: boolean;
-  }>({
-    regionId: '',
-    municipalities: [],
-    bounds: { west: 0, south: 0, east: 0, north: 0 },
-    tilesInstalled: false,
-    engineAvailable: false,
+  const [mapboxQuota, setMapboxQuota] = useState<MapboxQuotaStatus>({
+    date: '',
+    count: 0,
+    limit: 3000,
+    remaining: 3000,
+    isLimitReached: false,
   });
+  const [mapboxConfigured, setMapboxConfigured] = useState(false);
+  const [cacheEntriesCount, setCacheEntriesCount] = useState(0);
 
   const runDiagnostics = useCallback(async () => {
     setLoading(true);
@@ -91,19 +100,14 @@ export default function DiagnosticScreen({ navigation }: Props) {
       });
     }
 
-    // 3. Diagnóstico do Valhalla Embutido
+    // 3. Diagnóstico do Mapbox Directions API & Cota Diária (3.000 req/dia)
     try {
-      const regionMeta = ValhallaService.getRegionMetadata();
-      const tiles = await ValhallaService.tilesReady();
-      const isNative = ValhallaService.isNativeAvailable();
+      const isConfig = MapboxService.isConfigured();
+      setMapboxConfigured(isConfig);
 
-      setValhallaStatus({
-        regionId: regionMeta.regionId,
-        municipalities: regionMeta.municipalities,
-        bounds: regionMeta.bounds,
-        tilesInstalled: tiles.installed,
-        engineAvailable: isNative,
-      });
+      const quota = await MapboxQuota.getUsage();
+      setMapboxQuota(quota);
+      setCacheEntriesCount(RouteCache.size());
     } catch {
       // ignore
     }
@@ -115,19 +119,21 @@ export default function DiagnosticScreen({ navigation }: Props) {
     runDiagnostics();
   }, [runDiagnostics]);
 
-  const testOfflineRoute = async () => {
+  const testMapboxRoute = async () => {
     try {
-      // Teste de rota local entre Maricá e Niterói
+      // Teste de rota entre Maricá e Niterói
       const p1: [number, number] = [-42.8188, -22.9192]; // Maricá
       const p2: [number, number] = [-43.1189, -22.8832]; // Niterói
 
-      const result = await ValhallaService.route([p1, p2]);
+      const result = await RoutingService.route([p1, p2]);
+      await runDiagnostics();
+
       Alert.alert(
-        'Teste de Rota 100% Offline OK!',
-        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nStatus: Calculado 100% localmente no dispositivo.`,
+        'Teste de Rota Mapbox OK!',
+        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nProvedor: ${result.geojson.features[0]?.properties?.provider || 'Mapbox'}\nStatus: Traçado de alta resolução com precisão viária (6 casas decimais).`,
       );
     } catch (e: any) {
-      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota offline.');
+      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota.');
     }
   };
 
@@ -151,24 +157,27 @@ export default function DiagnosticScreen({ navigation }: Props) {
             onPress={() => navigation.goBack()}
             hitSlop={8}
           >
-            <Text style={styles.backBtnText}>← Voltar</Text>
+            <ArrowLeft size={16} color={colors.primary} />
+            <Text style={styles.backBtnText}>Voltar</Text>
           </Pressable>
 
           <Pressable
             style={({ pressed }) => [styles.refreshBtn, pressed && styles.btnPressed]}
             onPress={runDiagnostics}
+            hitSlop={8}
           >
-            <Text style={styles.refreshBtnText}>🔄 Atualizar</Text>
+            <RefreshCw size={14} color={colors.textSecondary} />
+            <Text style={styles.refreshBtnText}>Atualizar</Text>
           </Pressable>
         </View>
 
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.headerTitle}>Diagnóstico do Sistema</Text>
-            <Text style={styles.headerSubtitle}>Validação e integridade 100% Offline</Text>
+            <Text style={styles.headerSubtitle}>Validação do Motor Mapbox & Cota Diária</Text>
           </View>
           <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeIcon}>🩺</Text>
+            <Activity size={24} color={colors.primary} />
           </View>
         </View>
 
@@ -179,45 +188,65 @@ export default function DiagnosticScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            {/* 1. Valhalla Embutido (Região: Maricá, Niterói, SG) */}
+            {/* 1. Mapbox Directions API & Cota Diária */}
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardHeaderTitle}>⚡ VALHALLA OFFLINE (MOTOR DE ROTAS)</Text>
+                <Text style={styles.cardHeaderTitle}>⚡ MAPBOX DIRECTIONS V5 (MOTOR DE ROTAS)</Text>
                 <View
                   style={[
                     styles.statusBadge,
-                    { backgroundColor: colors.successGhost },
+                    {
+                      backgroundColor: mapboxConfigured
+                        ? colors.successGhost
+                        : colors.warningGhost,
+                    },
                   ]}
                 >
-                  <Text style={[styles.statusBadgeText, { color: colors.success }]}>
-                    100% Offline
+                  <Text
+                    style={[
+                      styles.statusBadgeText,
+                      { color: mapboxConfigured ? colors.success : colors.warning },
+                    ]}
+                  >
+                    {mapboxConfigured ? 'Ativo & Configurado' : 'Chave Pendente'}
                   </Text>
                 </View>
               </View>
 
               <DiagItem
-                label="Região Mapeada:"
-                value={valhallaStatus.municipalities.join(', ')}
+                label="Motor de Roteamento:"
+                value="Mapbox Directions v5 (driving-traffic)"
                 bold
+                color={colors.primary}
               />
               <DiagItem
-                label="Limites (Bounding Box):"
-                value={`W: ${valhallaStatus.bounds.west}° | S: ${valhallaStatus.bounds.south}°\nE: ${valhallaStatus.bounds.east}° | N: ${valhallaStatus.bounds.north}°`}
-              />
-              <DiagItem
-                label="Motor de Cálculo:"
-                value="Valhalla Local / Integrado"
+                label="Precisão da Polyline:"
+                value="GeoJSON 6 Casas Decimais (1 metro)"
                 color={colors.success}
               />
               <DiagItem
-                label="Dependência de Internet:"
-                value="NENHUMA (0 chamadas externas)"
-                color={colors.success}
+                label="Cota Utilizada Hoje:"
+                value={`${mapboxQuota.count} / ${mapboxQuota.limit} requisições`}
                 bold
+                color={mapboxQuota.isLimitReached ? colors.danger : colors.textPrimary}
+              />
+              <DiagItem
+                label="Cota Restante Hoje:"
+                value={`${mapboxQuota.remaining} requisições`}
+                bold
+                color={mapboxQuota.remaining > 500 ? colors.success : colors.warning}
+              />
+              <DiagItem
+                label="Renovação da Cota:"
+                value="Automática à meia-noite (00:00)"
+              />
+              <DiagItem
+                label="Rotas Salvas em Cache:"
+                value={`${cacheEntriesCount} rotas em memória`}
               />
 
-              <Pressable style={styles.actionBtn} onPress={testOfflineRoute}>
-                <Text style={styles.actionBtnText}>🧪 Testar Cálculo de Rota Offline (Maricá ↔ Niterói)</Text>
+              <Pressable style={styles.actionBtn} onPress={testMapboxRoute}>
+                <Text style={styles.actionBtnText}>🧪 Testar Cálculo de Rota Mapbox (Maricá ↔ Niterói)</Text>
               </Pressable>
             </View>
 

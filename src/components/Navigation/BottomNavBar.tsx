@@ -3,13 +3,13 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
+import { Map, BarChart3, Package, Settings } from 'lucide-react-native';
 
 export type NavTabKey = 'Map' | 'Home' | 'Deliveries' | 'Settings';
 
 export interface NavTabItem {
   key: NavTabKey;
   label: string;
-  icon: string;
   badge?: number;
 }
 
@@ -28,27 +28,27 @@ export function BottomNavBar({
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
 
-  const tabs: NavTabItem[] = [
+  const tabs: { key: NavTabKey; label: string; icon: React.ComponentType<{ size: number; color: string; strokeWidth: number }>; badge?: number }[] = [
     {
       key: 'Map',
       label: 'Entrega',
-      icon: '🗺️',
+      icon: Map,
     },
     {
       key: 'Home',
       label: 'Rotas',
-      icon: '📊',
+      icon: BarChart3,
     },
     {
       key: 'Deliveries',
       label: 'Endereços',
-      icon: '📦',
+      icon: Package,
       badge: pendingCount > 0 ? pendingCount : undefined,
     },
     {
       key: 'Settings',
       label: 'Ajustes',
-      icon: '⚙️',
+      icon: Settings,
     },
   ];
 
@@ -64,6 +64,9 @@ export function BottomNavBar({
       <View style={styles.tabRow}>
         {tabs.map((tab) => {
           const isActive = activeTab === tab.key;
+          const IconComp = tab.icon;
+          const iconColor = isActive ? colors.primary : colors.textMuted;
+
           return (
             <Pressable
               key={tab.key}
@@ -72,9 +75,11 @@ export function BottomNavBar({
               hitSlop={4}
             >
               <View style={styles.iconContainer}>
-                <Text style={[styles.tabIcon, isActive && styles.tabIconActive]}>
-                  {tab.icon}
-                </Text>
+                <IconComp
+                  size={21}
+                  color={iconColor}
+                  strokeWidth={isActive ? 2.4 : 1.8}
+                />
                 {tab.badge !== undefined && tab.badge > 0 && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>
@@ -100,6 +105,7 @@ export function BottomNavBar({
     </View>
   );
 }
+
 
 const createStyles = (colors: any) =>
   StyleSheet.create({

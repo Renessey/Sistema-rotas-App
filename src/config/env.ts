@@ -1,20 +1,37 @@
-import { GOOGLE_MAPS_API_KEY as ENV_GOOGLE_KEY } from '@env';
+import { MAPBOX_ACCESS_TOKEN as ENV_MAPBOX_TOKEN } from '@env';
+
+function getDynamicEnv(): Record<string, string | undefined> {
+  try {
+    return require('@env') || {};
+  } catch {
+    return {};
+  }
+}
 
 /**
- * Módulo central de variáveis de ambiente.
- * A chave é lida estritamente a partir do arquivo .env via react-native-dotenv ou process.env.
+ * Módulo central de variáveis de ambiente — 100% Mapbox.
+ * As chaves são lidas a partir do arquivo .env via react-native-dotenv ou process.env.
  */
-export const GOOGLE_MAPS_API_KEY: string = (
-  ENV_GOOGLE_KEY ||
-  (typeof process !== 'undefined' && process.env?.GOOGLE_MAPS_API_KEY) ||
+export const MAPBOX_ACCESS_TOKEN: string = (
+  ENV_MAPBOX_TOKEN ||
+  getDynamicEnv().MAPBOX_ACCESS_TOKEN ||
+  (typeof process !== 'undefined' && process.env?.MAPBOX_ACCESS_TOKEN) ||
   ''
 ).trim();
 
-export function getGoogleMapsApiKey(): string {
-  if (!GOOGLE_MAPS_API_KEY) {
+export function getMapboxAccessToken(): string {
+  const dynamicEnv = getDynamicEnv();
+  const token = (
+    MAPBOX_ACCESS_TOKEN ||
+    dynamicEnv.MAPBOX_ACCESS_TOKEN ||
+    (typeof process !== 'undefined' && process.env?.MAPBOX_ACCESS_TOKEN) ||
+    ''
+  ).trim();
+
+  if (!token) {
     throw new Error(
-      'Chave GOOGLE_MAPS_API_KEY não configurada no arquivo .env. Por favor, adicione GOOGLE_MAPS_API_KEY=sua_chave no arquivo .env.',
+      'Token MAPBOX_ACCESS_TOKEN não configurado no arquivo .env. Adicione MAPBOX_ACCESS_TOKEN=pk.eyJ... no seu .env.',
     );
   }
-  return GOOGLE_MAPS_API_KEY;
+  return token;
 }

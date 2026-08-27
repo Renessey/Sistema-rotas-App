@@ -1,0 +1,53 @@
+# Backlog de Tarefas - Melhorias de Rota, Mapa e UX
+
+Abaixo estão as tarefas refinadas com detalhes técnicos e de usabilidade (UX) para facilitar o entendimento da equipe de desenvolvimento.
+
+---
+
+### Task 1 - Ajuste de linha da rota azul (Polyline) e GPS
+- **Problema atual:** Ao iniciar a rota, a linha azul não conecta a localização real do GPS ao início da rota na via (geralmente inicia na rua ao lado de onde o usuário está).
+- **Ações a serem desenvolvidas:**
+  1. Forçar a captura de GPS de alta precisão (ex: `enableHighAccuracy: true`) antes de traçar a polyline.
+  2. Implementar uma "linha de conexão tracejada": se o usuário estiver fora de uma via mapeada (ex: dentro de pátios ou terrenos), desenhar uma linha tracejada da coordenada real do GPS até o primeiro ponto da rota azul na rua mapeada.
+  3. Utilizar o vetor de direção do celular (bússola/heading) para que a rota considere para onde o veículo está virado, evitando instruções de retorno desnecessárias.
+
+---
+
+### Task 2 - Roteirização por laço (Lasso Tool)
+- **Ações a serem desenvolvidas:**
+  1. Adicionar um botão no mapa para ativar a ferramenta de "traçar rota em laço".
+  2. Ao ativar o botão, **bloquear o arraste (pan)** do mapa para que o toque do usuário desenhe a forma geométrica perfeitamente.
+  3. Ao fechar o laço, aplicar **feedback visual imediato**, mudando a cor dos marcadores/entregas que foram capturados dentro da seleção.
+  4. Exibir um Modal na tela contendo:
+     - Informação visual: "X pontos selecionados".
+     - Botão de Confirmar e Reotimizar Rota.
+     - Botão de Retroceder laços.
+     - Botão Fechar (X).
+
+---
+
+### Task 3 - Botão Config e Consumo
+- **Ações a serem desenvolvidas:**
+  O botão de configurações deverá abrir um modal central com os seguintes tópicos/funcionalidades:
+  1. **Gerar Documentos:** Abre um sub-modal para gerar documentos aleatórios. Adicionar um indicador de carregamento (spinner/loading) no botão para sinalizar processamento ao usuário.
+  2. **Reotimizar Rota:** Abre um sub-modal de confirmação de recálculo (Sim / Não).
+  3. **Consumo de Combustível:**
+     - Abre um sub-modal para inserir o consumo (km/L) e valor/litros atual.
+     - **Melhoria:** Salvar o consumo (km/L) no cache (Storage) do app para que o usuário não precise digitar todo dia.
+     - Após confirmar, exibir um "Card HUD (Heads-up Display)" flutuante e minimizável no topo do mapa contendo: Consumo otimizado da rota atual, Tempo restante para terminar, Km restantes e Consumo de combustível estimado necessário.
+
+---
+
+### Task 4 - Componente de Diagnóstico do Sistema
+- **Ações a serem desenvolvidas:**
+  1. Remover a exibição do componente de diagnóstico da tela principal/mapa.
+  2. Alocar essa visualização estritamente dentro da tela de Configurações.
+  3. **Melhoria de UX:** Adicionar um "Badge de Status" (uma bolinha indicadora) sobre o ícone de Configurações no mapa principal. Verde = Sistema OK; Vermelho = Erro ou alerta no diagnóstico. Assim, o motorista sabe se precisa conferir o sistema sem precisar abrir o menu.
+
+---
+
+### Task 5 - Otimização Manual de Rota
+- **Ações a serem desenvolvidas:**
+  1. Remover o gatilho automático: O sistema **nunca** deve otimizar a rota automaticamente após as respostas de formulários/perguntas na tela.
+  2. Inserir um botão de "Otimizar Rota" centralizado na interface.
+  3. **Regra de interface:** O botão deve iniciar desabilitado (cinza) e só ganhar destaque visual (ex: azul vibrante, call-to-action ativado) quando o usuário fizer alguma alteração que exija recálculo (como adicionar um ponto ou usar o laço da Task 2).

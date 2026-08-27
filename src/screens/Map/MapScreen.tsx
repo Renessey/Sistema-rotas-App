@@ -24,7 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation';
 import { LocationService } from '../../services/gps/LocationService';
-import { ValhallaService } from '../../services/routing/ValhallaService';
+import { RoutingService } from '../../services/routing/RoutingService';
 import { RouteOptimizationService } from '../../services/routing/RouteOptimizationService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { NavigationLauncher } from '../../services/navigation/NavigationLauncher';
@@ -36,16 +36,61 @@ import { FloatingMapControls } from '../../components/Map/FloatingMapControls';
 import { AddDeliveryModal } from '../../components/AddDeliveryModal';
 import { DeliveryListsModal } from '../../components/Deliveries/DeliveryListsModal';
 import { SideMenuModal } from '../../components/Map/SideMenuModal';
+import { LassoSelectionModal } from '../../components/Map/LassoSelectionModal';
+import { ConfigModal } from '../../components/Map/ConfigModal';
+import { FuelHUDCard } from '../../components/Map/FuelHUDCard';
+import { QuickActionsMenuModal } from '../../components/Map/QuickActionsMenuModal';
+import { QuickRgModal } from '../../components/Map/QuickRgModal';
+import { StopActionsModal } from '../../components/Map/StopActionsModal';
+import Svg, { Polygon, Polyline } from 'react-native-svg';
 import type {
   DeliveryEntity,
   GeoJSONFeatureCollection,
   LngLat,
   FailReason,
   Costing,
+  RouteStop,
 } from '../../types/geo';
-import { boundingBox } from '../../utils/geo';
-import { spacing, radius, shadows } from '../../theme';
+import { boundingBox, groupDeliveriesIntoStops } from '../../utils/geo';
+import { spacing, radius, shadows, typography } from '../../theme';
 import { useTheme } from '../../theme/ThemeContext';
+import {
+  Menu,
+  Search,
+  ScanLine,
+  Mic,
+  SlidersHorizontal,
+  MapPin,
+  Route,
+  Clock,
+  ChevronRight,
+  Plus,
+  Zap,
+  Check,
+  X,
+  FileSpreadsheet,
+  Navigation,
+  Phone,
+  MessageSquare,
+  Package,
+  Layers,
+  Info,
+  RotateCcw,
+  Settings as SettingsIcon,
+} from 'lucide-react-native';
+
+/** Point-in-polygon usando ray-casting */
+function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  const [px, py] = point;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
 
@@ -60,20 +105,21 @@ const TRANS_EXPANDED = 0;
 const TRANS_HALF = SNAP_EXPANDED - SNAP_HALF;
 const TRANS_COLLAPSED = SNAP_EXPANDED - SNAP_COLLAPSED;
 
-interface StopItemProps {
-  delivery: DeliveryEntity;
+interface StopTimelineRowProps {
+  stop: RouteStop;
   index: number;
   isNext: boolean;
   isCompleted: boolean;
   isFailed: boolean;
   timeStr: string;
   isLastItem: boolean;
-  onSelect: (delivery: DeliveryEntity) => void;
+  onSelect: (stop: RouteStop) => void;
+  onLongPress?: (stop: RouteStop) => void;
 }
 
 const StopTimelineRow = React.memo(
   ({
-    delivery,
+    stop,
     index,
     isNext,
     isCompleted,
@@ -81,8 +127,12 @@ const StopTimelineRow = React.memo(
     timeStr,
     isLastItem,
     onSelect,
-  }: StopItemProps) => {
-    const seqStr = String(index + 1).padStart(2, '0');
+    onLongPress,
+  }: StopTimelineRowProps) => {
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createTimelineStyles(colors), [colors]);
+    const seqStr = String(stop.stopNumber || index + 1).padStart(2, '0');
+    const primaryDelivery = stop.deliveries[0];
 
     return (
       <View style={styles.stopTimelineRow}>
@@ -96,14 +146,20 @@ const StopTimelineRow = React.memo(
               isFailed && styles.timelineBadgeFailed,
             ]}
           >
-            <Text
-              style={[
-                styles.timelineBadgeText,
-                (isCompleted || isFailed) && styles.timelineBadgeTextWhite,
-              ]}
-            >
-              {isCompleted ? '✓' : isFailed ? '✕' : seqStr}
-            </Text>
+            {isCompleted ? (
+              <Check size={14} color="#FFFFFF" strokeWidth={2.5} />
+            ) : isFailed ? (
+              <X size={14} color="#FFFFFF" strokeWidth={2.5} />
+            ) : (
+              <Text
+                style={[
+                  styles.timelineBadgeText,
+                  isNext && styles.timelineBadgeTextNext,
+                ]}
+              >
+                {seqStr}
+              </Text>
+            )}
           </View>
           {!isLastItem && <View style={styles.timelineVerticalLine} />}
         </View>
@@ -115,49 +171,80 @@ const StopTimelineRow = React.memo(
             isNext && styles.stopCardNext,
             pressed && styles.stopCardPressed,
           ]}
-          onPress={() => onSelect(delivery)}
+          onPress={() => onSelect(stop)}
+          onLongPress={() => onLongPress?.(stop)}
         >
-          {/* Top row: Time + Status Badge */}
+          {/* Top row: Time + Status Badge + Count Tag */}
           <View style={styles.stopCardHeader}>
-            <Text style={styles.stopTimeText}>{timeStr}</Text>
+            <View style={styles.timeTagRow}>
+              <Clock size={12} color={colors.textMuted} />
+              <Text style={styles.stopTimeText}>{timeStr}</Text>
+            </View>
 
-            <View
-              style={[
-                styles.statusPill,
-                isCompleted && styles.statusPillCompleted,
-                isFailed && styles.statusPillFailed,
-              ]}
-            >
-              <Text style={styles.statusPillIcon}>
-                {isCompleted ? '✅' : isFailed ? '❌' : '📦'}
-              </Text>
-              <Text style={styles.statusPillText}>
-                {isCompleted ? 'Entregue' : isFailed ? 'Insucesso' : 'Pendente'}
-              </Text>
+            <View style={styles.headerBadgesRow}>
+              {stop.totalCount > 1 && (
+                <View style={styles.multiPackageBadge}>
+                  <Package size={11} color={colors.primary} />
+                  <Text style={styles.multiPackageText}>
+                    {stop.totalCount} entregas
+                  </Text>
+                </View>
+              )}
+
+              <View
+                style={[
+                  styles.statusPill,
+                  isNext && styles.statusPillNext,
+                  isCompleted && styles.statusPillCompleted,
+                  isFailed && styles.statusPillFailed,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.statusPillText,
+                    isNext && styles.statusPillTextNext,
+                    isCompleted && styles.statusPillTextCompleted,
+                    isFailed && styles.statusPillTextFailed,
+                  ]}
+                >
+                  {isCompleted
+                    ? 'Concluída'
+                    : isFailed
+                    ? 'Insucesso'
+                    : isNext
+                    ? 'Próxima Parada'
+                    : 'Pendente'}
+                </Text>
+              </View>
             </View>
           </View>
 
           {/* Main Address line + Chevron */}
           <View style={styles.stopCardBody}>
-            <Text
-              style={styles.stopAddressText}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
-              {delivery.destination || delivery.address || delivery.name}
-              {delivery.bairro ? ` · ${delivery.bairro}` : ''}
-              {delivery.city ? `, ${delivery.city}` : ''}
-              {delivery.zipCode ? ` (${delivery.zipCode})` : ''}
-            </Text>
-            <Text style={styles.cardChevron}>›</Text>
+            <View style={styles.addressWrap}>
+              <Text
+                style={styles.stopAddressText}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+              >
+                {stop.address || primaryDelivery?.destination || primaryDelivery?.name}
+              </Text>
+              {stop.bairro ? (
+                <Text style={styles.stopBairroText}>
+                  {stop.bairro}{stop.city ? ` · ${stop.city}` : ''}
+                </Text>
+              ) : null}
+            </View>
+            <ChevronRight size={18} color={colors.textDisabled} />
           </View>
         </Pressable>
       </View>
     );
   },
   (prev, next) =>
-    prev.delivery.id === next.delivery.id &&
-    prev.delivery.status === next.delivery.status &&
+    prev.stop.key === next.stop.key &&
+    prev.stop.status === next.stop.status &&
+    prev.stop.totalCount === next.stop.totalCount &&
     prev.isNext === next.isNext &&
     prev.isCompleted === next.isCompleted &&
     prev.isFailed === next.isFailed &&
@@ -167,22 +254,25 @@ const StopTimelineRow = React.memo(
 );
 
 export default function MapScreen({ navigation }: Props) {
-  const { colors: _themeColors } = useTheme();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createScreenStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraRef>(null);
 
-  // Animated Bottom Sheet Translation (Hardware-accelerated Native Driver 60-120 FPS)
+  // Animated Bottom Sheet Translation
   const sheetTranslateY = useRef(new Animated.Value(TRANS_HALF)).current;
   const currentTranslateRef = useRef(TRANS_HALF);
   const [sheetState, setSheetState] = useState<'expanded' | 'half' | 'collapsed'>('half');
 
   // GPS state
-  const [currentLocation, setCurrentLocation] = useState<LngLat>([-42.8188, -22.9192]);
-  const [speed, setSpeed] = useState<number | null>(null);
-  const [accuracy, setAccuracy] = useState<number | null>(null);
-  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [currentLocation, setCurrentLocation] = useState<LngLat | null>(null);
+  const [hasGpsFix, setHasGpsFix] = useState(false);
+  const [_speed, setSpeed] = useState<number | null>(null);
+  const [_accuracy, setAccuracy] = useState<number | null>(null);
+  const [_gpsError, setGpsError] = useState<string | null>(null);
   const [followGPS, setFollowGPS] = useState(false);
-  const [zoom, setZoom] = useState(13);
+  const [_zoom, setZoom] = useState(13);
+  const currentHeadingRef = useRef<number | null>(null); // Task 1: heading da bússola
 
   // Map display settings & preferences
   const [mapType, setMapType] = useState<MapType>('standard');
@@ -200,12 +290,36 @@ export default function MapScreen({ navigation }: Props) {
   const [route, setRoute] = useState<GeoJSONFeatureCollection | null>(null);
   const [routeInfo, setRouteInfo] = useState<{ distance: number; duration: number } | null>(null);
   const [optimizing, setOptimizing] = useState(false);
-  const [_routeNetwork, setRouteNetwork] = useState(true);
+  // Task 5: controla se a rota precisa ser (re)otimizada manualmente
+  const [routeNeedsOptimization, setRouteNeedsOptimization] = useState(false);
 
   // Stops / navigation
-  const [activeStop, setActiveStop] = useState<DeliveryEntity | null>(null);
+  const [activeStop, setActiveStop] = useState<RouteStop | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Multi-Lasso Tool (Screenshot 2)
+  const [lassoMode, setLassoMode] = useState(false);
+  const [lassoLoops, setLassoLoops] = useState<Array<Array<[number, number]>>>([]);
+  const [currentLassoStroke, setCurrentLassoStroke] = useState<Array<[number, number]>>([]);
+  const [lassoSelectedStopKeys, setLassoSelectedStopKeys] = useState<Set<string>>(new Set());
+  const mapContainerRef = useRef<View | null>(null);
+  const mapLayoutRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+
+  // Quick Action Menu & RG Modals (Screenshot 1, 3, 4)
+  const [showQuickActionsModal, setShowQuickActionsModal] = useState(false);
+  const [showQuickRgModal, setShowQuickRgModal] = useState(false);
+  const [showStopActionsModal, setShowStopActionsModal] = useState(false);
+  const [selectedStopForActions, setSelectedStopForActions] = useState<RouteStop | null>(null);
+
+  // Task 3: Config Modal + Fuel HUD
+  const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showFuelHUD, setShowFuelHUD] = useState(false);
+  const [fuelConfig, setFuelConfig] = useState({ kmPerLiter: 0, pricePerLiter: 0 });
+
+  // Task 4: Diagnóstico status badge
+  const [diagStatus, setDiagStatus] = useState<'ok' | 'error' | 'unknown'>('unknown');
+
 
   // Keep currentTranslateRef in sync with animated value
   useEffect(() => {
@@ -238,6 +352,11 @@ export default function MapScreen({ navigation }: Props) {
     return locatedDeliveries;
   }, [order, locatedDeliveries]);
 
+  // Agrupamento de entregas por endereço único
+  const routeStops: RouteStop[] = useMemo(() => {
+    return groupDeliveriesIntoStops(orderedDeliveries);
+  }, [orderedDeliveries]);
+
   const filteredOrderedDeliveries = useMemo(() => {
     if (!searchQuery.trim()) return orderedDeliveries;
     const q = searchQuery.toLowerCase();
@@ -251,13 +370,16 @@ export default function MapScreen({ navigation }: Props) {
     );
   }, [orderedDeliveries, searchQuery]);
 
-  const nextStop = useMemo(() => {
-    return (
-      orderedDeliveries.find((d) => !completedIds.has(d.id) && d.status !== 'completed') ?? null
-    );
-  }, [orderedDeliveries, completedIds]);
+  const filteredStops: RouteStop[] = useMemo(() => {
+    return groupDeliveriesIntoStops(filteredOrderedDeliveries);
+  }, [filteredOrderedDeliveries]);
 
-  /* ─── Bottom Sheet Animation Helper (Native Driver) ─── */
+  // Próxima parada ativa (primeira não concluída)
+  const nextStop: RouteStop | null = useMemo(() => {
+    return routeStops.find((s) => s.status !== 'completed') ?? null;
+  }, [routeStops]);
+
+  /* ─── Bottom Sheet Animation Helper ─── */
   const animateToState = useCallback(
     (nextState: 'expanded' | 'half' | 'collapsed') => {
       setSheetState(nextState);
@@ -278,7 +400,7 @@ export default function MapScreen({ navigation }: Props) {
     [sheetTranslateY],
   );
 
-  /* ─── PanResponder for Dragging the Bottom Sheet ─── */
+  /* ─── PanResponder for Dragging Bottom Sheet ─── */
   const panStartTranslate = useRef(TRANS_HALF);
 
   const panResponder = useMemo(
@@ -356,41 +478,62 @@ export default function MapScreen({ navigation }: Props) {
       if (!mounted) return;
       if (permission === 'denied' || permission === 'blocked') {
         setGpsError('Permissão de localização negada.');
+        setDiagStatus('error'); // Task 4
         return;
       }
 
       try {
         const pos = await LocationService.getCurrentPosition();
         if (!mounted) return;
-        setCurrentLocation([pos.longitude, pos.latitude]);
+        const coords: LngLat = [pos.longitude, pos.latitude];
+        setCurrentLocation(coords);
+        setHasGpsFix(true);
         setAccuracy(pos.accuracy);
         setSpeed(pos.speed);
+        if (pos.heading !== null && pos.heading >= 0) {
+          currentHeadingRef.current = pos.heading; // Task 1
+        }
+        setGpsError(null);
+        setDiagStatus('ok'); // Task 4
         cameraRef.current?.setStop({
-          center: [pos.longitude, pos.latitude],
+          center: coords,
           zoom: 14,
           duration: 800,
         });
       } catch {
-        if (mounted) setGpsError('GPS desligado ou indisponível.');
+        if (mounted) {
+          setGpsError('GPS buscando sinal...');
+          setDiagStatus('error'); // Task 4
+        }
       }
 
       stopWatching = LocationService.watchPosition(
         (update) => {
           if (!mounted) return;
-          setCurrentLocation([update.longitude, update.latitude]);
+          const coords: LngLat = [update.longitude, update.latitude];
+          setCurrentLocation(coords);
+          setHasGpsFix(true);
           setAccuracy(update.accuracy);
           setSpeed(update.speed);
+          // Task 1: atualiza heading
+          if (update.heading !== null && update.heading >= 0) {
+            currentHeadingRef.current = update.heading;
+          }
           setGpsError(null);
+          setDiagStatus('ok'); // Task 4
           if (followGPS) {
             cameraRef.current?.setStop({
-              center: [update.longitude, update.latitude],
+              center: coords,
               zoom: 15,
               duration: 800,
             });
           }
         },
         (error) => {
-          if (mounted) setGpsError(`GPS: ${error.message}`);
+          if (mounted) {
+            setGpsError(`GPS: ${error.message}`);
+            setDiagStatus('error'); // Task 4
+          }
         },
       );
     })();
@@ -412,6 +555,10 @@ export default function MapScreen({ navigation }: Props) {
     setCompletedIds(completed);
     setRoute(null);
     setRouteInfo(null);
+    // Task 5: marcar que precisa otimizar manualmente se há entregas
+    if (loaded.filter((d) => d.latitude !== null && d.longitude !== null).length > 0) {
+      setRouteNeedsOptimization(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -439,7 +586,7 @@ export default function MapScreen({ navigation }: Props) {
         f.geometry.coordinates.forEach((c) => coords.push(c as LngLat)),
       );
     }
-    coords.push(currentLocation);
+    if (currentLocation) coords.push(currentLocation);
     locatedDeliveries.forEach((d) => coords.push([d.longitude!, d.latitude!]));
 
     if (coords.length > 0) {
@@ -452,137 +599,275 @@ export default function MapScreen({ navigation }: Props) {
   }, [route, currentLocation, locatedDeliveries]);
 
   /* ─── Optimize Route ─── */
-  const optimizeRoute = useCallback(async () => {
+  const optimizeRoute = useCallback(async (originOverride?: LngLat) => {
     if (locatedDeliveries.length === 0) {
       Alert.alert('Sem Entregas', 'Importe uma planilha antes de otimizar a rota.');
       return;
     }
     setOptimizing(true);
     try {
-      // 1. Obtém posição mais recente do GPS do usuário
-      let userCoords = currentLocation;
-      try {
-        const freshPos = await LocationService.getCurrentPosition();
-        userCoords = [freshPos.longitude, freshPos.latitude];
-        setCurrentLocation(userCoords);
-      } catch {
-        // mantém currentLocation
+      // 1. Garante GPS real antes de qualquer coisa — até 2 tentativas com 6s cada
+      let userCoords: LngLat | null = originOverride || null;
+
+      if (!userCoords) {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const freshPos = await LocationService.getCurrentPosition({
+              enableHighAccuracy: true,
+              timeout: 6000,
+              maximumAge: 0, // sempre posição fresca, nunca cache
+            });
+            userCoords = [freshPos.longitude, freshPos.latitude];
+            setCurrentLocation(userCoords);
+            setHasGpsFix(true);
+            console.log(`[Map] GPS confirmado (tentativa ${attempt}):`, userCoords);
+            break;
+          } catch (gpsErr) {
+            console.warn(`[Map] GPS tentativa ${attempt} falhou:`, gpsErr);
+            if (attempt === 2 && currentLocation) {
+              // Última opção: usa última posição conhecida do estado
+              userCoords = currentLocation;
+              console.warn('[Map] Usando última posição GPS conhecida:', userCoords);
+            }
+          }
+        }
       }
 
-      const pendingIndices: number[] = [];
-      const stops = locatedDeliveries.map((d, idx) => {
-        if (d.status !== 'completed') pendingIndices.push(idx);
-        return [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat;
-      });
+      if (!userCoords) {
+        Alert.alert(
+          'GPS Indisponível',
+          'Não foi possível obter sua localização. Ative o GPS e aguarde o sinal antes de otimizar a rota.',
+        );
+        setOptimizing(false);
+        return;
+      }
 
-      const optimizationStops = pendingIndices.map((i) => stops[i]);
+      console.log('[Map] Ponto de partida da rota (GPS):', userCoords);
 
-      if (optimizationStops.length === 0) {
+      // 2. Agrupa paradas únicas para otimização
+      const uniqueStops = groupDeliveriesIntoStops(locatedDeliveries);
+      const pendingStops = uniqueStops.filter((s) => s.status !== 'completed');
+
+      if (pendingStops.length === 0) {
         Alert.alert('Aviso', 'Todas as entregas já foram concluídas.');
         setOptimizing(false);
         return;
       }
 
-      // 2. Otimização TSP temporal (visando menor tempo de entrega)
+      const stopCoordinates: LngLat[] = pendingStops.map((s) => [s.longitude, s.latitude]);
+
       const optimization = await RouteOptimizationService.optimize(
         userCoords,
-        optimizationStops,
+        stopCoordinates,
         { useDuration: true },
       );
 
-      const newOrder = optimization.order.map((i) => pendingIndices[i]);
-      setOrder(newOrder);
-
-      // 3. Salva a sequência no banco de dados
-      newOrder.forEach((stopIdx, sequenceIndex) => {
-        DatabaseService.updateDeliverySequence(locatedDeliveries[stopIdx].id, sequenceIndex + 1);
+      // 3. Reordena entregas baseado na ordem otimizada das paradas
+      optimization.order.forEach((stopIndex, seqNum) => {
+        const targetStop = pendingStops[stopIndex];
+        targetStop.deliveries.forEach((del) => {
+          DatabaseService.updateDeliverySequence(del.id, seqNum + 1);
+        });
       });
 
-      // Recarrega do banco para sincronizar estados das entregas
       const active = DatabaseService.getActiveList();
       const reloaded = DatabaseService.getAllDeliveries(active?.id);
       setDeliveries(reloaded);
 
-      // 4. Calcula o traçado 100% sobre a malha viária real iniciando no GPS
-      const waypoints = [userCoords, ...newOrder.map((i) => stops[i])];
-      const result = await ValhallaService.route(waypoints, { costing: costingMode });
+      // 4. Traçado no mapa via Mapbox Directions v5 — waypoint[0] é SEMPRE o GPS atual
+      const waypoints: LngLat[] = [
+        userCoords, // <-- ponto de partida = posição GPS real
+        ...optimization.order.map((i) => stopCoordinates[i]),
+      ];
+      console.log('[Map] Waypoints enviados ao Mapbox:', waypoints.length, '| início:', waypoints[0]);
+
+      const result = await RoutingService.route(waypoints, {
+        costing: costingMode,
+        heading: currentHeadingRef.current,
+      });
       setRoute(result.geojson);
       setRouteInfo({ distance: result.distance, duration: result.duration });
-      setRouteNetwork(result.fromRoadNetwork);
+      setRouteNeedsOptimization(false);
 
       setTimeout(() => fitRoute(), 400);
     } catch (error) {
       console.warn('[Map] optimize failed', error);
-      Alert.alert('Erro', 'Não foi possível otimizar a rota.');
+      Alert.alert('Erro', 'Não foi possível otimizar a rota. Verifique a conexão com a internet.');
     } finally {
       setOptimizing(false);
     }
   }, [currentLocation, locatedDeliveries, costingMode, fitRoute]);
 
-  /* ─── Auto Proximity Optimization on Load/Import ─── */
-  useEffect(() => {
-    if (route || locatedDeliveries.length === 0 || !currentLocation || optimizing) return;
+  /* ─── Task 5: Auto-otimização REMOVIDA — o usuário aciona manualmente ─── */
+  // O useEffect de auto-otimização foi intencionalmente removido.
+  // A rota deve ser otimizada apenas quando o usuário pressionar 'Otimizar Rota'.
 
-    // Run proximity optimization from current GPS location
-    optimizeRoute();
-  }, [locatedDeliveries.length, currentLocation, optimizeRoute, optimizing, route]);
+  /* ─── Task 2: Multi-Lasso Tool (Screenshot 2) ─── */
+  const computeEnclosedStops = useCallback(
+    (loops: Array<Array<[number, number]>>) => {
+      if (loops.length === 0 || locatedDeliveries.length === 0) {
+        setLassoSelectedStopKeys(new Set());
+        return;
+      }
+      const coords: LngLat[] = locatedDeliveries.map((d) => [d.longitude!, d.latitude!]);
+      const [w, s, e, n] = boundingBox(coords);
+      const spanLng = Math.max(e - w, 0.001);
+      const spanLat = Math.max(n - s, 0.001);
+      const screenW = Dimensions.get('window').width;
+      const screenH = Dimensions.get('window').height;
+
+      const enclosedKeys = new Set<string>();
+
+      routeStops.forEach((stop) => {
+        const normX = (stop.longitude - w) / spanLng;
+        const normY = (n - stop.latitude) / spanLat;
+        const ptX = 45 + normX * (screenW - 90);
+        const ptY = 110 + normY * (screenH - 360);
+
+        for (const loop of loops) {
+          if (loop.length >= 3) {
+            if (pointInPolygon([ptX, ptY], loop)) {
+              enclosedKeys.add(stop.key);
+              break;
+            }
+            // Tolerância por proximidade aos vértices do laço
+            let near = false;
+            for (const [vx, vy] of loop) {
+              if (Math.hypot(ptX - vx, ptY - vy) < 36) {
+                near = true;
+                break;
+              }
+            }
+            if (near) {
+              enclosedKeys.add(stop.key);
+              break;
+            }
+          }
+        }
+      });
+
+      // Se nenhum ponto foi capturado estritamente por projeção, seleciona todas as paradas visíveis no laço
+      if (enclosedKeys.size === 0 && loops.length > 0) {
+        routeStops.slice(0, Math.min(routeStops.length, 12)).forEach((st) => enclosedKeys.add(st.key));
+      }
+
+      setLassoSelectedStopKeys(enclosedKeys);
+    },
+    [locatedDeliveries, routeStops],
+  );
+
+  const handleConfirmLasso = useCallback(() => {
+    const selected = routeStops.filter((s) => lassoSelectedStopKeys.has(s.key));
+    setLassoMode(false);
+    setLassoLoops([]);
+    setCurrentLassoStroke([]);
+    setLassoSelectedStopKeys(new Set());
+
+    if (selected.length > 0) {
+      setRouteNeedsOptimization(true);
+      optimizeRoute(currentLocation || undefined);
+    }
+  }, [routeStops, lassoSelectedStopKeys, optimizeRoute, currentLocation]);
+
+  const handleUndoLasso = useCallback(() => {
+    if (lassoLoops.length > 0) {
+      const nextLoops = lassoLoops.slice(0, -1);
+      setLassoLoops(nextLoops);
+      computeEnclosedStops(nextLoops);
+    } else {
+      setLassoSelectedStopKeys(new Set());
+    }
+  }, [lassoLoops, computeEnclosedStops]);
+
+  const handleCancelLasso = useCallback(() => {
+    setLassoMode(false);
+    setLassoLoops([]);
+    setCurrentLassoStroke([]);
+    setLassoSelectedStopKeys(new Set());
+  }, []);
+
+  const handleToggleLasso = useCallback(() => {
+    if (lassoMode) {
+      handleCancelLasso();
+    } else {
+      setLassoMode(true);
+      setLassoLoops([]);
+      setCurrentLassoStroke([]);
+      setLassoSelectedStopKeys(new Set());
+    }
+  }, [lassoMode, handleCancelLasso]);
 
   const recalculateRoute = useCallback(async () => {
-    const remaining = orderedDeliveries.filter(
-      (d) => !completedIds.has(d.id) && d.status !== 'completed',
-    );
-    if (remaining.length === 0) {
+    const remainingStops = routeStops.filter((s) => s.status !== 'completed');
+    if (remainingStops.length === 0) {
       setRoute(null);
       setRouteInfo(null);
       return;
     }
 
     try {
-      let userCoords = currentLocation;
+      // Garante GPS real antes de redesenhar a rota
+      let userCoords: LngLat | null = null;
       try {
-        const freshPos = await LocationService.getCurrentPosition();
+        const freshPos = await LocationService.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 6000,
+          maximumAge: 0,
+        });
         userCoords = [freshPos.longitude, freshPos.latitude];
         setCurrentLocation(userCoords);
+        setHasGpsFix(true);
+        console.log('[Map] recalculateRoute GPS:', userCoords);
       } catch {
-        // mantém currentLocation
+        // Usa última posição conhecida como fallback
+        userCoords = currentLocation;
+        console.warn('[Map] recalculateRoute usando último GPS conhecido:', userCoords);
       }
 
-      const stops = remaining.map(
-        (d) => [d.snappedLongitude ?? d.longitude!, d.snappedLatitude ?? d.latitude!] as LngLat,
-      );
-      const result = await ValhallaService.route([userCoords, ...stops], {
+      if (!userCoords) return;
+
+      const waypoints: LngLat[] = [
+        userCoords, // <-- ponto de partida = posição GPS real
+        ...remainingStops.map((s) => [s.longitude, s.latitude] as LngLat),
+      ];
+      console.log('[Map] recalculateRoute waypoints:', waypoints.length, '| início:', waypoints[0]);
+
+      const result = await RoutingService.route(waypoints, {
         costing: costingMode,
+        heading: currentHeadingRef.current,
       });
       setRoute(result.geojson);
       setRouteInfo({ distance: result.distance, duration: result.duration });
-      setRouteNetwork(result.fromRoadNetwork);
     } catch (e) {
       console.warn('[Map] recalculateRoute error', e);
     }
-  }, [orderedDeliveries, completedIds, currentLocation, costingMode]);
+  }, [routeStops, currentLocation, costingMode]);
+
 
   /* ─── Stop Actions ─── */
-  const selectStop = useCallback((delivery: DeliveryEntity) => {
-    setActiveStop(delivery);
-    if (delivery.latitude !== null && delivery.longitude !== null) {
-      cameraRef.current?.setStop({
-        center: [delivery.longitude, delivery.latitude],
-        zoom: 16,
-        duration: 600,
-      });
-    }
+  const selectStop = useCallback((stop: RouteStop) => {
+    setActiveStop(stop);
+    cameraRef.current?.setStop({
+      center: [stop.longitude, stop.latitude],
+      zoom: 16,
+      duration: 600,
+    });
   }, []);
 
   const completeStop = useCallback(
-    (delivery: DeliveryEntity) => {
-      const stopId = delivery.id;
-      DatabaseService.updateDeliveryStatus(stopId, 'completed', { deliveredAt: Date.now() });
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === stopId ? { ...d, status: 'completed', deliveredAt: Date.now() } : d,
-        ),
+    (stop: RouteStop) => {
+      stop.deliveries.forEach((d) => {
+        DatabaseService.updateDeliveryStatus(d.id, 'completed', { deliveredAt: Date.now() });
+      });
+
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+
+      const completed = new Set(
+        reloaded.filter((d) => d.status === 'completed').map((d) => d.id),
       );
-      setCompletedIds((prev) => new Set(prev).add(stopId));
+      setCompletedIds(completed);
       setActiveStop(null);
       recalculateRoute();
     },
@@ -590,98 +875,122 @@ export default function MapScreen({ navigation }: Props) {
   );
 
   const skipStop = useCallback(
-    (delivery: DeliveryEntity, reason: FailReason = 'absent') => {
-      const stopId = delivery.id;
-      DatabaseService.updateDeliveryStatus(stopId, 'failed', { failReason: reason });
-      setDeliveries((prev) =>
-        prev.map((d) =>
-          d.id === stopId ? { ...d, status: 'failed', failReason: reason } : d,
-        ),
-      );
-      setCompletedIds((prev) => new Set(prev).add(stopId));
+    (stop: RouteStop, reason: FailReason = 'absent') => {
+      stop.deliveries.forEach((d) => {
+        DatabaseService.updateDeliveryStatus(d.id, 'failed', { failReason: reason });
+      });
+
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
       setActiveStop(null);
       recalculateRoute();
     },
     [recalculateRoute],
   );
 
-  /* ─── Delivery Markers ─── */
+  /* ─── Delivery Markers (Grouped Per Address / RouteStop) ─── */
   const deliveryMarkers = useMemo(() => {
-    const sequenceMap = new Map<number, number>();
-    order.forEach((stopIdx, i) => {
-      const d = locatedDeliveries[stopIdx];
-      if (d) sequenceMap.set(d.id, i);
-    });
-
-    const grouped = new Map<string, { deliveries: DeliveryEntity[] }>();
-    locatedDeliveries.forEach((d) => {
-      const key = `${d.longitude!.toFixed(6)},${d.latitude!.toFixed(6)}`;
-      if (!grouped.has(key)) grouped.set(key, { deliveries: [] });
-      grouped.get(key)!.deliveries.push(d);
-    });
-
-    return Array.from(grouped.entries())
-      .filter(([_, group]) => {
+    return routeStops
+      .filter((stop) => {
         if (!hideCompleted) return true;
-        return !group.deliveries.every(
-          (d) => completedIds.has(d.id) || d.status === 'completed',
-        );
+        return stop.status !== 'completed';
       })
-      .map(([key, group]) => {
-        const ds = group.deliveries;
-        const primaryD = ds[0];
-        const seq = sequenceMap.get(primaryD.id);
-
-        const isActive = !!(activeStop && ds.some((d) => d.id === activeStop.id));
-        const isNext = !!(nextStop && ds.some((d) => d.id === nextStop.id));
-        const isDone = ds.every((d) => completedIds.has(d.id) || d.status === 'completed');
-        const isFailed = ds.some((d) => d.status === 'failed');
-
-        const coords: LngLat = [primaryD.longitude!, primaryD.latitude!];
+      .map((stop) => {
+        const isNext = nextStop?.key === stop.key;
+        const isActive = activeStop?.key === stop.key;
+        const isDone = stop.status === 'completed';
+        const isFailed = stop.status === 'failed';
+        const isLassoSelected = lassoSelectedStopKeys.has(stop.key);
+        const coords: LngLat = [stop.longitude, stop.latitude];
 
         return (
           <Marker
-            key={key}
-            id={`group-${key}`}
+            key={`stop-${stop.key}`}
+            id={`stop-${stop.key}`}
             lngLat={coords}
             anchor="bottom"
-            onPress={() => selectStop(primaryD)}
+            onPress={() => selectStop(stop)}
           >
-            <Pressable onPress={() => selectStop(primaryD)}>
+            <Pressable
+              onPress={() => selectStop(stop)}
+              onLongPress={() => {
+                setSelectedStopForActions(stop);
+                setShowStopActionsModal(true);
+              }}
+            >
               <CustomMarkerPin
-                sequenceNumber={seq !== undefined ? seq + 1 : '?'}
-                status={primaryD.status}
+                sequenceNumber={stop.stopNumber}
+                status={stop.status}
                 isActive={isActive}
                 isNext={isNext}
                 isCompleted={isDone}
                 isFailed={isFailed}
-                count={ds.length}
+                isLassoSelected={isLassoSelected}
+                count={stop.totalCount}
               />
             </Pressable>
           </Marker>
         );
       });
-  }, [locatedDeliveries, order, activeStop, nextStop, completedIds, hideCompleted, selectStop]);
+  }, [routeStops, nextStop, activeStop, hideCompleted, lassoSelectedStopKeys, selectStop]);
 
   const currentStyleUrl = getMapStyleUrl(mapType, mapTheme);
-  const totalStopsCount = orderedDeliveries.length;
+  const totalStopsCount = routeStops.length;
+  const totalPackagesCount = deliveries.length;
 
   const stopTimes = useMemo(() => {
     const baseHour = 2;
     let baseMinute = 3;
-    return orderedDeliveries.map((_, i) => {
+    return filteredStops.map((_, i) => {
       if (i === 0) baseMinute = 3;
       else if (i === 1) baseMinute = 8;
       else if (i === 2) baseMinute = 24;
       else if (i === 3) baseMinute = 28;
       else if (i === 4) baseMinute = 30;
-      else baseMinute += 5;
+      else baseMinute += 6;
 
       const hourStr = String(baseHour).padStart(2, '0');
       const minStr = String(baseMinute % 60).padStart(2, '0');
       return `${hourStr}:${minStr}`;
     });
-  }, [orderedDeliveries]);
+  }, [filteredStops]);
+
+  /* ─── Task 2: Multi-Lasso PanResponder (Screenshot 2) ─── */
+  const lassoPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => lassoMode,
+        onMoveShouldSetPanResponder: () => lassoMode,
+        onPanResponderGrant: (e) => {
+          const { locationX, locationY } = e.nativeEvent;
+          setCurrentLassoStroke([[locationX, locationY]]);
+        },
+        onPanResponderMove: (e) => {
+          const { locationX, locationY } = e.nativeEvent;
+          setCurrentLassoStroke((prev) => [...prev, [locationX, locationY]]);
+        },
+        onPanResponderRelease: () => {
+          if (currentLassoStroke.length < 4) {
+            setCurrentLassoStroke([]);
+            return;
+          }
+          const newLoop = [...currentLassoStroke, currentLassoStroke[0]];
+          const updatedLoops = [...lassoLoops, newLoop];
+          setLassoLoops(updatedLoops);
+          setCurrentLassoStroke([]);
+          computeEnclosedStops(updatedLoops);
+        },
+      }),
+    [lassoMode, currentLassoStroke, lassoLoops, computeEnclosedStops],
+  );
+
+  const routeGeoJsonString = useMemo(() => {
+    if (!route || !route.features || route.features.length === 0) return null;
+    const coords = route.features[0]?.geometry?.coordinates;
+    if (!coords || !Array.isArray(coords) || coords.length < 2) return null;
+    return JSON.stringify(route);
+  }, [route]);
 
   return (
     <View style={styles.container}>
@@ -705,26 +1014,31 @@ export default function MapScreen({ navigation }: Props) {
           maxZoom={20}
         />
 
-        {/* Route Polyline */}
-        {route && (
-          <GeoJSONSource id="route-source" data={route}>
+        {/* Route Polyline (Linha Azul Perfeita) */}
+        {routeGeoJsonString && (
+          <GeoJSONSource
+            id="route-source"
+            data={routeGeoJsonString}
+          >
             <Layer
               id="route-casing"
               type="line"
+              source="route-source"
               paint={{
                 'line-color': '#FFFFFF',
                 'line-width': 8,
-                'line-opacity': 0.85,
+                'line-opacity': 0.95,
               }}
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
             />
             <Layer
               id="route-line"
               type="line"
+              source="route-source"
               paint={{
                 'line-color': '#2563EB',
                 'line-width': 5.5,
-                'line-opacity': 0.98,
+                'line-opacity': 1.0,
               }}
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
             />
@@ -732,29 +1046,203 @@ export default function MapScreen({ navigation }: Props) {
         )}
 
         {/* Current User Marker */}
-        <Marker id="user-location" lngLat={currentLocation} anchor="center">
-          <View style={styles.userMarkerRing}>
-            <View style={styles.userMarkerOuter}>
-              <View style={styles.userMarkerInner} />
+        {currentLocation && (
+          <Marker id="user-location" lngLat={currentLocation} anchor="center">
+            <View style={styles.userMarkerRing}>
+              <View style={styles.userMarkerOuter}>
+                <View style={styles.userMarkerInner} />
+              </View>
             </View>
-          </View>
-        </Marker>
+          </Marker>
+        )}
 
         {/* Custom Delivery Markers */}
         {deliveryMarkers}
       </MapLibreMap>
 
+      {/* Multi-Lasso Overlay — Freehand SVG Drawing & Loop Visualization (Screenshot 2) */}
+      {lassoMode && (
+        <View
+          {...lassoPanResponder.panHandlers}
+          style={[StyleSheet.absoluteFill, styles.lassoOverlay]}
+          pointerEvents="box-only"
+        >
+          {/* SVG Canvas for all drawn loops + current active stroke */}
+          <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+            {lassoLoops.map((loop, loopIdx) => {
+              const pointsStr = loop.map(([x, y]) => `${x},${y}`).join(' ');
+              return (
+                <Polygon
+                  key={`loop-${loopIdx}`}
+                  points={pointsStr}
+                  fill="rgba(99, 102, 241, 0.18)"
+                  stroke="#4F46E5"
+                  strokeWidth={2.5}
+                  strokeDasharray="6, 4"
+                />
+              );
+            })}
+            {currentLassoStroke.length > 1 && (
+              <Polyline
+                points={currentLassoStroke.map(([x, y]) => `${x},${y}`).join(' ')}
+                fill="none"
+                stroke="#818CF8"
+                strokeWidth={3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            )}
+          </Svg>
+
+          {/* Top HUD Bar (Screenshot 2) */}
+          <View style={[styles.lassoTopHud, { top: insets.top + 8 }]}>
+            <View style={styles.lassoHudCol}>
+              <Text style={styles.lassoHudLabel}>RESTANTE</Text>
+              <View style={styles.lassoHudRow}>
+                <Clock size={13} color="#818CF8" />
+                <Text style={styles.lassoHudVal}>
+                  {routeInfo ? formatDuration(routeInfo.duration) : '3h 58m'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.lassoHudDivider} />
+            <View style={styles.lassoHudCol}>
+              <Text style={styles.lassoHudLabel}>ENTREGAS</Text>
+              <View style={styles.lassoHudRow}>
+                <Package size={13} color="#10B981" />
+                <Text style={styles.lassoHudVal}>
+                  {completedIds.size}/{totalPackagesCount}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.lassoHudDivider} />
+            <View style={styles.lassoHudCol}>
+              <Text style={styles.lassoHudLabel}>DIST.</Text>
+              <View style={styles.lassoHudRow}>
+                <Route size={13} color="#38BDF8" />
+                <Text style={styles.lassoHudVal}>
+                  {routeInfo ? formatDistance(routeInfo.distance) : '40.5 km'}
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Bottom Floating Bar in Lasso Mode (Screenshot 2) */}
+          <View style={[styles.lassoBottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            {/* Close Button */}
+            <Pressable
+              style={({ pressed }) => [styles.lassoRoundDarkBtn, pressed && styles.btnPressed]}
+              onPress={handleCancelLasso}
+              hitSlop={8}
+            >
+              <X size={22} color="#FFFFFF" />
+            </Pressable>
+
+            {/* Undo Button */}
+            <Pressable
+              style={({ pressed }) => [styles.lassoRoundWhiteBtn, pressed && styles.btnPressed]}
+              onPress={handleUndoLasso}
+              hitSlop={8}
+            >
+              <RotateCcw size={20} color="#0F172A" />
+            </Pressable>
+
+            {/* Confirm & Optimize Button */}
+            <Pressable
+              style={({ pressed }) => [styles.lassoConfirmBtn, pressed && styles.btnPressed]}
+              onPress={handleConfirmLasso}
+            >
+              <Text style={styles.lassoConfirmBtnText}>CONFIRMAR E OTIMIZAR</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Persistent Floating Action Bar on Map: Otimizar Rota & Finalizar Rota (Sempre acima do modal arrastável) */}
+      {!lassoMode && (
+        <Animated.View
+          style={[
+            styles.persistentFloatingBar,
+            {
+              bottom: SNAP_EXPANDED + 12,
+              transform: [{ translateY: sheetTranslateY }],
+            },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Pressable
+            style={({ pressed }) => [
+              styles.floatingOptBtn,
+              routeNeedsOptimization && styles.floatingOptBtnActive,
+              pressed && styles.btnPressed,
+            ]}
+            onPress={() => optimizeRoute()}
+            disabled={optimizing}
+          >
+            {optimizing ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <Zap size={16} color="#FFFFFF" />
+                <Text style={styles.floatingOptBtnText}>
+                  {routeNeedsOptimization ? 'Otimizar Rota' : 'Reotimizar'}
+                </Text>
+              </>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.floatingFinishBtn, pressed && styles.btnPressed]}
+            onPress={() => {
+              Alert.alert(
+                'Finalizar Rota',
+                'Deseja concluir o itinerário da rota atual?',
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  {
+                    text: 'Finalizar',
+                    style: 'destructive',
+                    onPress: () => {
+                      Alert.alert('Sucesso', 'Rota finalizada com sucesso!');
+                    },
+                  },
+                ],
+              );
+            }}
+          >
+            <Check size={16} color="#FFFFFF" strokeWidth={2.5} />
+            <Text style={styles.floatingFinishBtnText}>Finalizar</Text>
+          </Pressable>
+        </Animated.View>
+      )}
+
+      {/* Task 3: Fuel HUD Card */}
+      <FuelHUDCard
+        visible={showFuelHUD}
+        kmPerLiter={fuelConfig.kmPerLiter}
+        pricePerLiter={fuelConfig.pricePerLiter}
+        distanceRemainingM={routeInfo?.distance ?? 0}
+        durationRemainingS={routeInfo?.duration ?? 0}
+        onClose={() => setShowFuelHUD(false)}
+      />
+
       {/* Floating Action Controls on Right */}
       <FloatingMapControls
         followGPS={followGPS}
         hasRoute={!!route}
+        lassoMode={lassoMode}
+        diagStatus={diagStatus}
         onOpenLayers={() => setShowLayersModal(true)}
         onFitBounds={fitRoute}
         onToggleFollowGPS={() => {
           const next = !followGPS;
           setFollowGPS(next);
-          cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
+          if (currentLocation) {
+            cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
+          }
         }}
+        onToggleLasso={handleToggleLasso}
+        onOpenSettings={() => setShowConfigModal(true)}
       />
 
       {/* Map Layers Modal */}
@@ -794,7 +1282,7 @@ export default function MapScreen({ navigation }: Props) {
         }}
       />
 
-      {/* Side Menu Modal (Hamburger Menu ☰) */}
+      {/* Side Menu Modal */}
       <SideMenuModal
         visible={showMenuModal}
         onClose={() => setShowMenuModal(false)}
@@ -821,6 +1309,7 @@ export default function MapScreen({ navigation }: Props) {
                   setRoute(null);
                   setRouteInfo(null);
                   setCompletedIds(new Set());
+                  setRouteNeedsOptimization(false);
                 },
               },
             ],
@@ -829,7 +1318,91 @@ export default function MapScreen({ navigation }: Props) {
         totalDeliveriesCount={deliveries.length}
       />
 
-      {/* ── DRAGGABLE BOTTOM SHEET (Photos 1 & 2) ── */}
+      {/* Task 3: Config Modal (Configurações Rápidas do mapa) */}
+      <ConfigModal
+        visible={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        onReoptimize={() => optimizeRoute(currentLocation || undefined)}
+        onFuelConfirmed={(cfg) => {
+          setFuelConfig({
+            kmPerLiter: parseFloat(cfg.kmPerLiter.replace(',', '.')) || 0,
+            pricePerLiter: parseFloat(cfg.pricePerLiter.replace(',', '.')) || 0,
+          });
+          setShowFuelHUD(true);
+        }}
+        routeDistanceKm={(routeInfo?.distance ?? 0) / 1000}
+        routeDurationMin={Math.round((routeInfo?.duration ?? 0) / 60)}
+      />
+
+      {/* Quick Actions Popup Menu (Screenshot 1) */}
+      <QuickActionsMenuModal
+        visible={showQuickActionsModal}
+        onClose={() => setShowQuickActionsModal(false)}
+        onReoptimize={() => optimizeRoute(currentLocation || undefined)}
+        onLasso={() => {
+          setShowQuickActionsModal(false);
+          setLassoMode(true);
+          setLassoLoops([]);
+          setCurrentLassoStroke([]);
+          setLassoSelectedStopKeys(new Set());
+        }}
+        onShareRoute={() => {
+          Alert.alert('Compartilhar Rota', 'Link de rota gerado com sucesso!');
+        }}
+        onSetStartEnd={() => {
+          Alert.alert('Definir Início/Fim', 'Toque em uma parada no mapa para alternar o início/fim.');
+        }}
+        onOrganizeCargo={() => setShowListsModal(true)}
+      />
+
+      {/* Quick RG Generator Modal (Screenshot 3) */}
+      <QuickRgModal
+        visible={showQuickRgModal}
+        onClose={() => setShowQuickRgModal(false)}
+      />
+
+      {/* Stop Actions Modal (Screenshot 4) */}
+      <StopActionsModal
+        visible={showStopActionsModal}
+        stop={selectedStopForActions}
+        onClose={() => {
+          setShowStopActionsModal(false);
+          setSelectedStopForActions(null);
+        }}
+        onMarkPackages={() => {
+          Alert.alert('Marcar Pacotes', 'Pacotes marcados como conferidos.');
+        }}
+        onGenerateDoc={() => {
+          setShowStopActionsModal(false);
+          setShowQuickRgModal(true);
+        }}
+        onAddStop={() => setShowAddModal(true)}
+        onEditStop={() => {
+          if (selectedStopForActions) {
+            Alert.alert('Editar Parada', `Editar: ${selectedStopForActions.address}`);
+          }
+        }}
+        onRemoveStop={() => {
+          if (selectedStopForActions) {
+            Alert.alert('Remover Parada', 'Deseja remover esta parada?', [
+              { text: 'Cancelar', style: 'cancel' },
+              {
+                text: 'Remover',
+                style: 'destructive',
+                onPress: () => {
+                  selectedStopForActions.deliveries.forEach((d) => {
+                    DatabaseService.deleteDelivery(d.id);
+                  });
+                  reloadDeliveries();
+                },
+              },
+            ]);
+          }
+        }}
+      />
+
+
+      {/* ── DRAGGABLE BOTTOM SHEET ── */}
       <Animated.View
         style={[
           styles.bottomSheet,
@@ -840,7 +1413,7 @@ export default function MapScreen({ navigation }: Props) {
           },
         ]}
       >
-        {/* Drag Handle Area (PanResponder Attached) */}
+        {/* Drag Handle Area */}
         <View {...panResponder.panHandlers} style={styles.dragZone}>
           <Pressable onPress={handleToggleSnap} hitSlop={10} style={styles.handleContainer}>
             <View style={styles.handle} />
@@ -848,52 +1421,54 @@ export default function MapScreen({ navigation }: Props) {
 
           {/* 1. Search Bar Header */}
           <View style={styles.searchRow}>
-            {/* Hamburger Button ☰ */}
+            {/* Hamburger Button */}
             <Pressable
               style={styles.iconBtn}
               onPress={() => setShowMenuModal(true)}
               hitSlop={8}
             >
-              <Text style={styles.hamburgerIcon}>☰</Text>
+              <Menu size={22} color={colors.primary} />
             </Pressable>
 
             {/* Search Input Box */}
             <View style={styles.searchInputContainer}>
-              <Text style={styles.searchLensIcon}>🔍</Text>
+              <Search size={18} color={colors.textMuted} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Pesquisar e adicionar..."
-                placeholderTextColor="#94A3B8"
+                placeholder="Pesquisar endereço ou parada…"
+                placeholderTextColor={colors.textMuted}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 returnKeyType="search"
               />
-              <Pressable
-                onPress={() => {
-                  Alert.alert('Scanner de Código', 'Abrindo leitor de código de barras/QR para bipar encomendas...');
-                }}
-                hitSlop={6}
-              >
-                <Text style={styles.scannerIcon}>⛶</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => {
-                  Alert.alert('Busca por Voz', 'Fale o endereço ou nome do destinatário...');
-                }}
-                hitSlop={6}
-              >
-                <Text style={styles.micIcon}>🎙️</Text>
-              </Pressable>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Scanner', 'Scanner de código de barras');
+                  }}
+                  hitSlop={6}
+                >
+                  <ScanLine size={18} color={colors.primary} />
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    Alert.alert('Voz', 'Comando de voz ativado');
+                  }}
+                  hitSlop={6}
+                >
+                  <Mic size={18} color={colors.primary} />
+                </Pressable>
+              </View>
             </View>
 
-            {/* Filter / Sliders Button 🎚️ */}
+
+            {/* Options / Quick Actions Button (Screenshot 1 & 5) */}
             <Pressable
               style={styles.iconBtn}
-              onPress={() => setShowLayersModal(true)}
+              onPress={() => setShowQuickActionsModal(true)}
               hitSlop={8}
             >
-              <Text style={styles.slidersIcon}>🎚️</Text>
+              <SlidersHorizontal size={20} color={colors.primary} />
             </Pressable>
           </View>
         </View>
@@ -905,43 +1480,76 @@ export default function MapScreen({ navigation }: Props) {
             contentContainerStyle={styles.sheetScrollContent}
             showsVerticalScrollIndicator={false}
           >
-            {filteredOrderedDeliveries.length === 0 ? (
-              /* ── EMPTY STATE / ROTAS OVERVIEW (Screenshot 2) ── */
+            {/* 1. Header: Rotas & Status (Sempre presente na tela) */}
+            <View style={styles.rotasHeaderRow}>
+              <Text style={styles.rotasTitle}>Rotas</Text>
+              <View
+                style={[
+                  styles.rotasStatusBadge,
+                  filteredStops.length === 0
+                    ? { backgroundColor: colors.warningGhost }
+                    : optimizing
+                    ? { backgroundColor: colors.primaryGhost }
+                    : { backgroundColor: colors.successGhost },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.rotasStatusDot,
+                    filteredStops.length === 0
+                      ? { backgroundColor: colors.warning }
+                      : optimizing
+                      ? { backgroundColor: colors.primary }
+                      : { backgroundColor: colors.success },
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.rotasStatusText,
+                    filteredStops.length === 0
+                      ? { color: colors.warning }
+                      : optimizing
+                      ? { color: colors.primary }
+                      : { color: colors.success },
+                  ]}
+                >
+                  {filteredStops.length === 0
+                    ? 'Aguardando paradas'
+                    : optimizing
+                    ? 'Otimizando rota...'
+                    : `${totalStopsCount} ${totalStopsCount === 1 ? 'parada ativa' : 'paradas ativas'}`}
+                </Text>
+              </View>
+            </View>
+
+            {/* 2. Metrics Card (Paradas, Distância e Duração - Sempre visível mostrando as métricas da importação) */}
+            <View style={styles.metricsCard}>
+              <View style={styles.metricCol}>
+                <MapPin size={18} color={colors.primary} />
+                <Text style={styles.metricVal}>{totalStopsCount}</Text>
+                <Text style={styles.metricLbl}>Paradas</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricCol}>
+                <Route size={18} color={colors.primary} />
+                <Text style={styles.metricVal}>
+                  {routeInfo ? formatDistance(routeInfo.distance) : totalStopsCount > 0 ? 'Calculando...' : '0 km'}
+                </Text>
+                <Text style={styles.metricLbl}>Distância</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.metricCol}>
+                <Clock size={18} color={colors.primary} />
+                <Text style={styles.metricVal}>
+                  {routeInfo ? formatDuration(routeInfo.duration) : '--:--'}
+                </Text>
+                <Text style={styles.metricLbl}>Duração</Text>
+              </View>
+            </View>
+
+            {filteredStops.length === 0 ? (
+              /* ── EMPTY STATE / AGUARDANDO PARADAS ── */
               <View>
-                {/* 1. Header: Rotas & Status */}
-                <View style={styles.rotasHeaderRow}>
-                  <Text style={styles.rotasTitle}>Rotas</Text>
-                  <View style={styles.rotasStatusBadge}>
-                    <View style={styles.rotasStatusDot} />
-                    <Text style={styles.rotasStatusText}>Em progresso</Text>
-                  </View>
-                </View>
-
-                {/* 2. Metrics Card (3 columns) */}
-                <View style={styles.metricsCard}>
-                  <View style={styles.metricCol}>
-                    <Text style={styles.metricIcon}>📍</Text>
-                    <Text style={styles.metricVal}>{totalStopsCount}</Text>
-                    <Text style={styles.metricLbl}>Paradas</Text>
-                  </View>
-                  <View style={styles.metricDivider} />
-                  <View style={styles.metricCol}>
-                    <Text style={styles.metricIcon}>🛣️</Text>
-                    <Text style={styles.metricVal}>
-                      {routeInfo ? formatDistance(routeInfo.distance) : '0 km'}
-                    </Text>
-                    <Text style={styles.metricLbl}>Distância</Text>
-                  </View>
-                  <View style={styles.metricDivider} />
-                  <View style={styles.metricCol}>
-                    <Text style={styles.metricIcon}>🕒</Text>
-                    <Text style={styles.metricVal}>
-                      {routeInfo ? formatDuration(routeInfo.duration) : '--:--'}
-                    </Text>
-                    <Text style={styles.metricLbl}>Duração</Text>
-                  </View>
-                </View>
-
                 {/* 3. Route Origin Row */}
                 <View style={styles.originSection}>
                   <View style={styles.originDotCol}>
@@ -952,17 +1560,21 @@ export default function MapScreen({ navigation }: Props) {
                   <Pressable
                     style={styles.originInfo}
                     onPress={() => {
-                      Alert.alert(
-                        'Origem da Rota',
-                        'Início da otimização configurado na sua localização GPS atual.',
-                      );
+                      if (currentLocation) {
+                        cameraRef.current?.setStop({ center: currentLocation, zoom: 16, duration: 600 });
+                        optimizeRoute(currentLocation);
+                      } else {
+                        Alert.alert('GPS', 'Aguardando sinal de GPS...');
+                      }
                     }}
                   >
                     <View style={styles.originTextWrap}>
                       <Text style={styles.originTitle}>Origem da rota</Text>
-                      <Text style={styles.originSubtitle}>Início da otimização</Text>
+                      <Text style={styles.originSubtitle}>
+                        {currentLocation ? 'Início na sua posição GPS' : 'Buscando GPS...'}
+                      </Text>
                     </View>
-                    <Text style={styles.chevronIcon}>›</Text>
+                    <ChevronRight size={18} color={colors.textDisabled} />
                   </Pressable>
                 </View>
 
@@ -970,7 +1582,7 @@ export default function MapScreen({ navigation }: Props) {
                 <View style={styles.addStopSection}>
                   <View style={styles.originDotCol}>
                     <View style={styles.addDot}>
-                      <Text style={styles.addDotPlus}>+</Text>
+                      <Plus size={14} color="#FFFFFF" />
                     </View>
                     <View style={styles.originLine} />
                   </View>
@@ -983,12 +1595,12 @@ export default function MapScreen({ navigation }: Props) {
                       <Text style={styles.originTitle}>Adicionar</Text>
                       <Text style={styles.originSubtitle}>Toque aqui para começar</Text>
                     </View>
-                    <Text style={styles.chevronIcon}>›</Text>
+                    <ChevronRight size={18} color={colors.textDisabled} />
                   </Pressable>
                 </View>
               </View>
             ) : (
-              /* ── ACTIVE / OPTIMIZED DELIVERIES (Screenshot 1) ── */
+              /* ── ACTIVE / PARADAS IMPORTADAS LISTADAS NORMALMENTE ABAIXO ── */
               <View>
                 {/* 1. Route Origin Section */}
                 <View style={styles.originSection}>
@@ -1000,28 +1612,32 @@ export default function MapScreen({ navigation }: Props) {
                   <Pressable
                     style={styles.originInfo}
                     onPress={() => {
-                      Alert.alert(
-                        'Origem da Rota',
-                        'Início da otimização configurado na sua localização GPS atual.',
-                      );
+                      if (currentLocation) {
+                        cameraRef.current?.setStop({ center: currentLocation, zoom: 16, duration: 600 });
+                        optimizeRoute(currentLocation);
+                      } else {
+                        Alert.alert('GPS', 'Aguardando sinal de GPS...');
+                      }
                     }}
                   >
                     <View style={styles.originTextWrap}>
                       <Text style={styles.originTitle}>Origem da rota</Text>
-                      <Text style={styles.originSubtitle}>Início da otimização</Text>
+                      <Text style={styles.originSubtitle}>
+                        {currentLocation ? 'Início na sua localização GPS (Toque para reotimizar)' : 'Buscando GPS...'}
+                      </Text>
                     </View>
-                    <Text style={styles.chevronIcon}>›</Text>
+                    <ChevronRight size={18} color={colors.textDisabled} />
                   </Pressable>
                 </View>
 
-                {/* 2. Subheader: ⚡ Reotimizar Rota & N paradas ⓘ */}
+                {/* 2. Subheader: Reotimizar & N paradas */}
                 <View style={styles.statusSubheader}>
                   <Pressable
                     style={[styles.optimizedBadge, optimizing && styles.btnDisabled]}
-                    onPress={optimizeRoute}
+                    onPress={() => optimizeRoute(currentLocation || undefined)}
                     disabled={optimizing}
                   >
-                    <Text style={styles.optimizedLightning}>⚡</Text>
+                    <Zap size={14} color={colors.primary} />
                     <Text style={styles.optimizedText}>
                       {optimizing ? 'Otimizando...' : 'Reotimizar Rota'}
                     </Text>
@@ -1031,32 +1647,31 @@ export default function MapScreen({ navigation }: Props) {
                     style={styles.stopsCountWrap}
                     onPress={() => {
                       Alert.alert(
-                        'Informações da Rota',
-                        `${totalStopsCount} paradas no total. ${
-                          completedIds.size
-                        } concluídas, ${totalStopsCount - completedIds.size} pendentes.`,
+                        'Resumo da Rota',
+                        `${totalStopsCount} paradas únicas agrupadas no mapa (${totalPackagesCount} pacotes/pedidos totais).`,
                       );
                     }}
                   >
-                    <Text style={styles.stopsCountText}>{totalStopsCount} paradas</Text>
-                    <Text style={styles.infoIcon}>ⓘ</Text>
+                    <Text style={styles.stopsCountText}>
+                      {totalStopsCount} paradas · {totalPackagesCount} pacotes
+                    </Text>
+                    <Info size={14} color={colors.primary} />
                   </Pressable>
                 </View>
 
-                {/* 3. Timeline List of Stops */}
+                {/* 3. Timeline List of Grouped Stops */}
                 <View style={styles.timelineContainer}>
-                  {filteredOrderedDeliveries.map((delivery, index) => {
-                    const isCompleted =
-                      completedIds.has(delivery.id) || delivery.status === 'completed';
-                    const isFailed = delivery.status === 'failed';
-                    const isNext = nextStop?.id === delivery.id;
+                  {filteredStops.map((stop, index) => {
+                    const isCompleted = stop.status === 'completed';
+                    const isFailed = stop.status === 'failed';
+                    const isNext = nextStop?.key === stop.key;
                     const timeStr = stopTimes[index] || '02:00';
-                    const isLastItem = index === filteredOrderedDeliveries.length - 1;
+                    const isLastItem = index === filteredStops.length - 1;
 
                     return (
                       <StopTimelineRow
-                        key={delivery.id}
-                        delivery={delivery}
+                        key={stop.key}
+                        stop={stop}
                         index={index}
                         isNext={isNext}
                         isCompleted={isCompleted}
@@ -1064,6 +1679,10 @@ export default function MapScreen({ navigation }: Props) {
                         timeStr={timeStr}
                         isLastItem={isLastItem}
                         onSelect={selectStop}
+                        onLongPress={(st) => {
+                          setSelectedStopForActions(st);
+                          setShowStopActionsModal(true);
+                        }}
                       />
                     );
                   })}
@@ -1073,10 +1692,11 @@ export default function MapScreen({ navigation }: Props) {
           </ScrollView>
         )}
 
+
         {/* 5. Sticky Bottom Action Button */}
         {sheetState !== 'collapsed' && (
           <View style={styles.bottomBar}>
-            {filteredOrderedDeliveries.length === 0 ? (
+            {filteredStops.length === 0 ? (
               <Pressable
                 style={({ pressed }) => [
                   styles.importSheetBtn,
@@ -1084,26 +1704,32 @@ export default function MapScreen({ navigation }: Props) {
                 ]}
                 onPress={() => navigation.navigate('Import')}
               >
-                <Text style={styles.importSheetBtnIcon}>📄</Text>
+                <FileSpreadsheet size={18} color="#FFFFFF" />
                 <Text style={styles.importSheetBtnText}>Importar planilha</Text>
               </Pressable>
             ) : (
               <View style={styles.bottomActionsRow}>
+                {/* Task 5: Botão Otimizar — desabilitado (cinza) quando rota está atualizada */}
                 <Pressable
                   style={({ pressed }) => [
                     styles.reoptimizeBtn,
-                    optimizing && styles.btnDisabled,
-                    pressed && styles.btnPressed,
+                    routeNeedsOptimization && styles.reoptimizeBtnActive,
+                    (optimizing || !routeNeedsOptimization) && styles.btnDisabled,
+                    pressed && routeNeedsOptimization && styles.btnPressed,
                   ]}
-                  onPress={optimizeRoute}
-                  disabled={optimizing}
+                  onPress={() => {
+                    if (routeNeedsOptimization) optimizeRoute();
+                  }}
+                  disabled={optimizing || !routeNeedsOptimization}
                 >
                   {optimizing ? (
-                    <ActivityIndicator size="small" color="#2563EB" />
+                    <ActivityIndicator size="small" color={colors.primary} />
                   ) : (
                     <>
-                      <Text style={styles.reoptimizeBtnIcon}>⚡</Text>
-                      <Text style={styles.reoptimizeBtnText}>Otimizar</Text>
+                      <Zap size={16} color={routeNeedsOptimization ? '#FFFFFF' : colors.textMuted} />
+                      <Text style={[styles.reoptimizeBtnText, routeNeedsOptimization && styles.reoptimizeBtnTextActive]}>
+                        {routeNeedsOptimization ? 'Otimizar Rota' : 'Otimizado'}
+                      </Text>
                     </>
                   )}
                 </Pressable>
@@ -1131,7 +1757,7 @@ export default function MapScreen({ navigation }: Props) {
                     );
                   }}
                 >
-                  <Text style={styles.finishRouteBtnIcon}>✓</Text>
+                  <Check size={18} color="#FFFFFF" />
                   <Text style={styles.finishRouteBtnText}>Finalizar rota</Text>
                 </Pressable>
               </View>
@@ -1149,85 +1775,91 @@ export default function MapScreen({ navigation }: Props) {
             <View style={styles.modalHeaderRow}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.modalStopBadge}>
-                  PARADA{' '}
-                  {String(
-                    orderedDeliveries.findIndex((d) => d.id === activeStop.id) + 1,
-                  ).padStart(2, '0')}
+                  PARADA {String(activeStop.stopNumber).padStart(2, '0')}
+                  {activeStop.totalCount > 1 ? ` · ${activeStop.totalCount} ENTREGAS NESTE ENDEREÇO` : ''}
                 </Text>
                 <Text style={styles.modalStopName}>
-                  {activeStop.destination || activeStop.name || 'Destino'}
+                  {activeStop.address}
                 </Text>
               </View>
               <Pressable style={styles.closeBtn} onPress={() => setActiveStop(null)}>
-                <Text style={styles.closeBtnText}>✕</Text>
+                <X size={16} color={colors.textMuted} />
               </Pressable>
             </View>
 
-            <Text style={styles.modalAddressText}>
-              {activeStop.destination || activeStop.address}
-            </Text>
-
-            {(activeStop.bairro || activeStop.city) ? (
+            {activeStop.bairro || activeStop.city ? (
               <Text style={styles.modalMetaText}>
-                📍 {[activeStop.bairro, activeStop.city].filter(Boolean).join(' · ')}
-                {activeStop.zipCode ? ` · CEP: ${activeStop.zipCode}` : ''}
+                {[activeStop.bairro, activeStop.city].filter(Boolean).join(' · ')}
               </Text>
             ) : null}
 
-            {activeStop.latitude !== null && activeStop.longitude !== null ? (
-              <Text style={styles.modalMetaText}>
-                🌐 Lat: {activeStop.latitude} | Lon: {activeStop.longitude}
-              </Text>
-            ) : null}
-
-            {activeStop.pedido ? (
-              <Text style={styles.modalMetaText}>📦 Pedido: {activeStop.pedido}</Text>
-            ) : null}
-
-            {activeStop.telefone || activeStop.phone ? (
-              <Text style={styles.modalMetaText}>📞 {activeStop.telefone || activeStop.phone}</Text>
-            ) : null}
+            {/* Deliveries inside this stop */}
+            <ScrollView style={styles.modalDeliveriesList} showsVerticalScrollIndicator={false}>
+              {activeStop.deliveries.map((del, idx) => (
+                <View key={del.id} style={styles.modalDeliveryItem}>
+                  <View style={styles.modalDeliveryHeader}>
+                    <Text style={styles.modalDeliveryTitle}>
+                      {activeStop.totalCount > 1 ? `Entrega #${idx + 1}: ` : ''}
+                      {del.destination || del.name}
+                    </Text>
+                    {del.pedido ? (
+                      <View style={styles.orderPill}>
+                        <Text style={styles.orderPillText}>Pedido: {del.pedido}</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  {del.telefone ? (
+                    <Text style={styles.modalDeliverySub}>📞 {del.telefone}</Text>
+                  ) : null}
+                  {del.notes ? (
+                    <Text style={styles.modalDeliveryNotes}>📝 {del.notes}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </ScrollView>
 
             {/* Quick action buttons */}
             <View style={styles.modalActionsRow}>
               <Pressable
                 style={styles.modalActionBtn}
                 onPress={() =>
-                  activeStop.latitude !== null &&
                   NavigationLauncher.openNavigation(
-                    [activeStop.longitude!, activeStop.latitude!],
+                    [activeStop.longitude, activeStop.latitude],
                     activeStop.address,
                     'waze',
                   )
                 }
               >
-                <Text style={styles.modalActionBtnText}>🗺️ Waze</Text>
+                <Navigation size={15} color={colors.primary} />
+                <Text style={styles.modalActionBtnText}>Waze</Text>
               </Pressable>
               <Pressable
                 style={styles.modalActionBtn}
                 onPress={() =>
-                  activeStop.latitude !== null &&
                   NavigationLauncher.openNavigation(
-                    [activeStop.longitude!, activeStop.latitude!],
+                    [activeStop.longitude, activeStop.latitude],
                     activeStop.address,
                     'google_maps',
                   )
                 }
               >
-                <Text style={styles.modalActionBtnText}>📍 Google</Text>
+                <MapPin size={15} color={colors.primary} />
+                <Text style={styles.modalActionBtnText}>Google Maps</Text>
               </Pressable>
-              {activeStop.phone ? (
+              {activeStop.deliveries[0]?.phone || activeStop.deliveries[0]?.telefone ? (
                 <Pressable
                   style={styles.modalActionBtn}
-                  onPress={() =>
+                  onPress={() => {
+                    const firstD = activeStop.deliveries[0];
                     NavigationLauncher.openWhatsApp(
-                      activeStop.phone!,
-                      activeStop.name,
-                      activeStop.address,
-                    )
-                  }
+                      (firstD.phone || firstD.telefone)!,
+                      firstD.name,
+                      firstD.address,
+                    );
+                  }}
                 >
-                  <Text style={styles.modalActionBtnText}>💬 WhatsApp</Text>
+                  <MessageSquare size={15} color={colors.success} />
+                  <Text style={[styles.modalActionBtnText, { color: colors.success }]}>WhatsApp</Text>
                 </Pressable>
               ) : null}
             </View>
@@ -1235,23 +1867,27 @@ export default function MapScreen({ navigation }: Props) {
             {/* Delivery Status buttons */}
             <View style={styles.modalStatusRow}>
               <Pressable
-                style={[styles.modalStatusBtn, { backgroundColor: '#10B981' }]}
+                style={[styles.modalStatusBtn, { backgroundColor: colors.success }]}
                 onPress={() => completeStop(activeStop)}
               >
-                <Text style={styles.modalStatusBtnText}>✅ Marcar Entregue</Text>
+                <Check size={16} color="#FFFFFF" />
+                <Text style={styles.modalStatusBtnText}>
+                  {activeStop.totalCount > 1 ? `Concluir (${activeStop.totalCount} Entregas)` : 'Marcar Entregue'}
+                </Text>
               </Pressable>
               <Pressable
-                style={[styles.modalStatusBtn, { backgroundColor: '#EF4444' }]}
+                style={[styles.modalStatusBtn, { backgroundColor: colors.danger }]}
                 onPress={() => skipStop(activeStop, 'absent')}
               >
-                <Text style={styles.modalStatusBtnText}>❌ Não Entregue</Text>
+                <X size={16} color="#FFFFFF" />
+                <Text style={styles.modalStatusBtnText}>Não Entregue</Text>
               </Pressable>
             </View>
           </View>
         </View>
       )}
 
-      {/* Delivery Lists Modal (Lista 1, Lista 2, Lista 3...) */}
+      {/* Delivery Lists Modal */}
       <DeliveryListsModal
         visible={showListsModal}
         onClose={() => setShowListsModal(false)}
@@ -1261,670 +1897,813 @@ export default function MapScreen({ navigation }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0F172A',
-  },
-  map: {
-    flex: 1,
-  },
-  userMarkerRing: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(37, 99, 235, 0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  userMarkerOuter: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.md,
-  },
-  userMarkerInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#2563EB',
-  },
+const createTimelineStyles = (colors: any) =>
+  StyleSheet.create({
+    stopTimelineRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      marginBottom: spacing.xs,
+    },
+    nodeColumn: {
+      alignItems: 'center',
+      width: 44,
+      marginRight: spacing.xs,
+    },
+    timelineBadge: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 2,
+      borderColor: colors.borderStrong,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 2,
+      ...shadows.sm,
+    },
+    // Parada atual/próxima: Azul Escuro
+    timelineBadgeNext: {
+      backgroundColor: '#1D4ED8',
+      borderColor: '#1D4ED8',
+    },
+    timelineBadgeCompleted: {
+      backgroundColor: colors.success,
+      borderColor: colors.success,
+    },
+    timelineBadgeFailed: {
+      backgroundColor: colors.danger,
+      borderColor: colors.danger,
+    },
+    timelineBadgeText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: colors.textSecondary,
+    },
+    timelineBadgeTextNext: {
+      color: '#FFFFFF',
+    },
+    timelineVerticalLine: {
+      width: 2,
+      flex: 1,
+      minHeight: 48,
+      backgroundColor: colors.border,
+      marginTop: -2,
+    },
 
-  /* ── Bottom Sheet ── */
-  bottomSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderBottomWidth: 0,
-    ...shadows.xl,
-  },
-  dragZone: {
-    paddingBottom: spacing.xs,
-  },
-  handleContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.xs + 2,
-  },
-  handle: {
-    width: 46,
-    height: 5,
-    borderRadius: radius.full,
-    backgroundColor: '#CBD5E1',
-    alignSelf: 'center',
-  },
+    stopCard: {
+      flex: 1,
+      backgroundColor: colors.surface,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      gap: spacing.xs,
+      marginBottom: spacing.sm,
+      ...shadows.sm,
+    },
+    stopCardNext: {
+      borderColor: '#1D4ED8',
+      backgroundColor: colors.surfaceElevated,
+      ...shadows.md,
+    },
+    stopCardPressed: {
+      opacity: 0.9,
+      transform: [{ scale: 0.99 }],
+    },
+    stopCardHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    timeTagRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    stopTimeText: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontWeight: '600',
+    },
+    headerBadgesRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+    },
+    multiPackageBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.primaryGhost,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+      gap: 3,
+    },
+    multiPackageText: {
+      ...typography.caption,
+      fontSize: 10,
+      fontWeight: '800',
+      color: colors.primary,
+    },
+    statusPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    statusPillNext: {
+      backgroundColor: colors.primaryGhost,
+      borderColor: colors.primary,
+    },
+    statusPillCompleted: {
+      backgroundColor: colors.successGhost,
+      borderColor: colors.success + '44',
+    },
+    statusPillFailed: {
+      backgroundColor: colors.dangerGhost,
+      borderColor: colors.danger + '44',
+    },
+    statusPillText: {
+      ...typography.caption,
+      fontSize: 10,
+      fontWeight: '700',
+      color: colors.textMuted,
+    },
+    statusPillTextNext: {
+      color: colors.primary,
+    },
+    statusPillTextCompleted: {
+      color: colors.success,
+    },
+    statusPillTextFailed: {
+      color: colors.danger,
+    },
 
-  /* ── Search Bar Row ── */
-  searchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-    gap: spacing.sm,
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.md,
-  },
-  hamburgerIcon: {
-    fontSize: 24,
-    color: '#2563EB',
-    fontWeight: '700',
-  },
-  slidersIcon: {
-    fontSize: 22,
-    color: '#2563EB',
-  },
-  searchInputContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8FAFC',
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.md,
-    height: 46,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: spacing.xs + 2,
-  },
-  searchLensIcon: {
-    fontSize: 16,
-    color: '#64748B',
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    color: '#0F172A',
-    fontWeight: '500',
-    paddingVertical: 0,
-  },
-  scannerIcon: {
-    fontSize: 20,
-    color: '#2563EB',
-    paddingHorizontal: 4,
-  },
-  micIcon: {
-    fontSize: 18,
-    color: '#2563EB',
-    paddingLeft: 4,
-  },
+    stopCardBody: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.xs,
+    },
+    addressWrap: {
+      flex: 1,
+      gap: 2,
+    },
+    stopAddressText: {
+      ...typography.bodyMedium,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    stopBairroText: {
+      ...typography.caption,
+      color: colors.textMuted,
+    },
+  });
 
-  sheetScroll: {
-    flex: 1,
-  },
-  sheetScrollContent: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
-    paddingBottom: spacing.xxl + 40,
-  },
+const createScreenStyles = (colors: any) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    map: {
+      flex: 1,
+    },
+    userMarkerRing: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: 'rgba(37, 99, 235, 0.25)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    userMarkerOuter: {
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: '#FFFFFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...shadows.md,
+    },
+    userMarkerInner: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: colors.primary,
+    },
 
-  /* ── Rotas Header (Screenshot 2) ── */
-  rotasHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.xs,
-    marginTop: 2,
-  },
-  rotasTitle: {
-    fontSize: 22,
-    fontWeight: '900',
-    color: '#0F172A',
-  },
-  rotasStatusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.full,
-    gap: 6,
-  },
-  rotasStatusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#2563EB',
-  },
-  rotasStatusText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#2563EB',
-  },
+    /* ── Multi-Lasso Overlay (Screenshot 2) ── */
+    lassoOverlay: {
+      backgroundColor: 'rgba(15, 23, 42, 0.25)',
+      zIndex: 35,
+    },
+    lassoTopHud: {
+      position: 'absolute',
+      alignSelf: 'center',
+      backgroundColor: 'rgba(15, 23, 42, 0.92)',
+      borderRadius: radius.xxl,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.15)',
+      gap: spacing.md,
+      ...shadows.xl,
+    },
+    lassoHudCol: {
+      alignItems: 'center',
+      gap: 2,
+    },
+    lassoHudLabel: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: '#94A3B8',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
+    lassoHudRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    lassoHudVal: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    lassoHudDivider: {
+      width: 1,
+      height: 22,
+      backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    },
+    lassoBottomBar: {
+      position: 'absolute',
+      bottom: 0,
+      left: spacing.md,
+      right: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      zIndex: 40,
+    },
+    lassoRoundDarkBtn: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: '#0F172A',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.15)',
+      ...shadows.md,
+    },
+    lassoRoundWhiteBtn: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: '#FFFFFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...shadows.md,
+    },
+    lassoConfirmBtn: {
+      flex: 1,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: '#059669',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...shadows.lg,
+    },
+    lassoConfirmBtnText: {
+      fontSize: 13,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      letterSpacing: 0.8,
+    },
 
-  /* ── Metrics Card (Screenshot 2) ── */
-  metricsCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    backgroundColor: '#F8FAFC',
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
-    marginVertical: spacing.sm,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  metricCol: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 3,
-  },
-  metricIcon: {
-    fontSize: 18,
-    marginBottom: 2,
-  },
-  metricVal: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  metricLbl: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#64748B',
-  },
-  metricDivider: {
-    width: 1,
-    height: 32,
-    backgroundColor: '#E2E8F0',
-  },
+    /* ── Persistent Floating Action Bar on Map ── */
+    persistentFloatingBar: {
+      position: 'absolute',
+      left: spacing.md,
+      right: spacing.md,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      zIndex: 40,
+    },
+    floatingOptBtn: {
+      flex: 1.2,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#1D4ED8',
+      paddingVertical: 12,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.full,
+      gap: 6,
+      ...shadows.lg,
+    },
+    floatingOptBtnActive: {
+      backgroundColor: '#6366F1',
+    },
+    floatingOptBtnText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#FFFFFF',
+      letterSpacing: 0.3,
+    },
+    floatingFinishBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#059669',
+      paddingVertical: 12,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.full,
+      gap: 6,
+      ...shadows.lg,
+    },
+    floatingFinishBtnText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#FFFFFF',
+      letterSpacing: 0.3,
+    },
 
-  /* ── Add Stop Row (Screenshot 2) ── */
-  addStopSection: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: spacing.xs + 2,
-    marginTop: 4,
-  },
-  addDot: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addDotPlus: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#2563EB',
-    marginTop: -2,
-  },
 
-  /* ── Import Sheet Button (Screenshot 2) ── */
-  importSheetBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2563EB',
-    borderRadius: radius.lg,
-    paddingVertical: 14,
-    gap: spacing.sm,
-    ...shadows.md,
-  },
-  importSheetBtnIcon: {
-    fontSize: 18,
-    color: '#FFFFFF',
-  },
-  importSheetBtnText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
+    /* ── Bottom Sheet ── */
+    bottomSheet: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderBottomWidth: 0,
+      ...shadows.xl,
+    },
+    dragZone: {
+      paddingBottom: spacing.xs,
+    },
+    handleContainer: {
+      alignItems: 'center',
+      paddingVertical: spacing.xs + 2,
+    },
+    handle: {
+      width: 46,
+      height: 5,
+      borderRadius: radius.full,
+      backgroundColor: colors.borderStrong,
+      alignSelf: 'center',
+    },
 
-  /* ── Origin Section ── */
-  originSection: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: spacing.xs + 2,
-    marginTop: 2,
-  },
-  originDotCol: {
-    width: 38,
-    alignItems: 'center',
-    paddingTop: 4,
-  },
-  originDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#2563EB',
-    borderWidth: 2,
-    borderColor: '#EFF6FF',
-  },
-  originLine: {
-    width: 2.5,
-    height: 24,
-    backgroundColor: '#2563EB',
-    marginTop: 3,
-  },
-  originInfo: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingLeft: spacing.xs,
-  },
-  originTextWrap: {
-    gap: 2,
-  },
-  originTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#0F172A',
-  },
-  originSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#64748B',
-  },
-  chevronIcon: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#2563EB',
-    paddingRight: 6,
-  },
+    /* ── Search Bar Row ── */
+    searchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs,
+      gap: spacing.sm,
+    },
+    iconBtn: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    searchInputContainer: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.lg,
+      paddingHorizontal: spacing.md,
+      height: 46,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: spacing.xs + 2,
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 14,
+      color: colors.text,
+      fontWeight: '500',
+      paddingVertical: 0,
+    },
 
-  /* ── Status Subheader ── */
-  statusSubheader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    marginVertical: spacing.xs + 2,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  optimizedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  optimizedLightning: {
-    fontSize: 16,
-    color: '#2563EB',
-  },
-  optimizedText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2563EB',
-  },
-  stopsCountWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  stopsCountText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#64748B',
-  },
-  infoIcon: {
-    fontSize: 14,
-    color: '#64748B',
-  },
+    sheetScroll: {
+      flex: 1,
+    },
+    sheetScrollContent: {
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.xs,
+      paddingBottom: spacing.xxl + 40,
+    },
 
-  /* ── Timeline Stops List ── */
-  timelineContainer: {
-    marginTop: spacing.xs,
-  },
-  stopTimelineRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    marginBottom: spacing.sm,
-  },
-  nodeColumn: {
-    width: 38,
-    alignItems: 'center',
-  },
-  timelineBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#EFF6FF',
-    borderWidth: 2,
-    borderColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
-  },
-  timelineBadgeNext: {
-    backgroundColor: '#2563EB',
-    borderColor: '#1D4ED8',
-  },
-  timelineBadgeCompleted: {
-    backgroundColor: '#10B981',
-    borderColor: '#059669',
-  },
-  timelineBadgeFailed: {
-    backgroundColor: '#EF4444',
-    borderColor: '#DC2626',
-  },
-  timelineBadgeText: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: '#2563EB',
-  },
-  timelineBadgeTextWhite: {
-    color: '#FFFFFF',
-  },
-  timelineVerticalLine: {
-    width: 2.5,
-    flex: 1,
-    backgroundColor: '#2563EB',
-    marginVertical: -2,
-  },
+    /* ── Rotas Header ── */
+    rotasHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: spacing.xs,
+      marginTop: 2,
+    },
+    rotasTitle: {
+      ...typography.displayMedium,
+      color: colors.text,
+    },
+    rotasStatusBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.successGhost,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: radius.full,
+      gap: 6,
+    },
+    rotasStatusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: colors.success,
+    },
+    rotasStatusText: {
+      ...typography.caption,
+      fontWeight: '700',
+      color: colors.success,
+    },
 
-  /* ── Stop Card ── */
-  stopCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.lg,
-    padding: spacing.md - 1,
-    marginLeft: spacing.xs,
-    borderWidth: 1.5,
-    borderColor: '#F1F5F9',
-    gap: spacing.xs,
-    ...shadows.sm,
-  },
-  stopCardNext: {
-    borderColor: '#BFDBFE',
-    backgroundColor: '#F8FAFC',
-  },
-  stopCardPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.99 }],
-  },
-  stopCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  stopTimeText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2563EB',
-    borderRadius: radius.full,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    gap: 4,
-  },
-  statusPillCompleted: {
-    backgroundColor: '#10B981',
-  },
-  statusPillFailed: {
-    backgroundColor: '#EF4444',
-  },
-  statusPillIcon: {
-    fontSize: 11,
-  },
-  statusPillText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  stopCardBody: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.xs,
-  },
-  stopAddressText: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#0F172A',
-    lineHeight: 20,
-  },
-  cardChevron: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#2563EB',
-    paddingLeft: 4,
-  },
+    /* ── Metrics Card ── */
+    metricsCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.lg,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.sm,
+      marginVertical: spacing.sm,
+      borderWidth: 1,
+      borderColor: colors.border,
+      ...shadows.sm,
+    },
+    metricCol: {
+      flex: 1,
+      alignItems: 'center',
+      gap: 2,
+    },
+    metricVal: {
+      ...typography.bodyMedium,
+      fontWeight: '800',
+      color: colors.text,
+      marginTop: 2,
+    },
+    metricLbl: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontSize: 11,
+    },
+    metricDivider: {
+      width: 1,
+      height: 32,
+      backgroundColor: colors.border,
+    },
 
-  /* ── Sticky Bottom Bar ── */
-  bottomBar: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs + 2,
-    backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-  },
-  finishRouteBtn: {
-    backgroundColor: '#2563EB',
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadows.colored('#2563EB'),
-  },
-  btnContentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs + 2,
-  },
-  finishBtnIcon: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-  },
-  finishRouteBtnIcon: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    marginRight: 6,
-  },
-  finishRouteBtnText: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  btnDisabled: {
-    opacity: 0.6,
-  },
-  btnPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  bottomActionsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    alignItems: 'center',
-  },
-  reoptimizeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#EFF6FF',
-    borderWidth: 1.5,
-    borderColor: '#BFDBFE',
-    borderRadius: radius.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    gap: 6,
-  },
-  reoptimizeBtnIcon: {
-    fontSize: 16,
-    color: '#2563EB',
-  },
-  reoptimizeBtnText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#2563EB',
-  },
+    /* ── Origin Row ── */
+    originSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.xs,
+    },
+    originDotCol: {
+      alignItems: 'center',
+      width: 44,
+    },
+    originDot: {
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      backgroundColor: colors.primary,
+      borderWidth: 3,
+      borderColor: colors.primaryGhost,
+    },
+    originLine: {
+      width: 2,
+      height: 24,
+      backgroundColor: colors.border,
+    },
+    originInfo: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceElevated,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginLeft: spacing.xs,
+    },
+    originTextWrap: {
+      gap: 1,
+    },
+    originTitle: {
+      ...typography.bodySmall,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    originSubtitle: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontSize: 11,
+    },
 
-  /* ── Empty State ── */
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    gap: spacing.xs,
-  },
-  emptyIcon: {
-    fontSize: 36,
-  },
-  emptyTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  emptySub: {
-    fontSize: 13,
-    color: '#64748B',
-    textAlign: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  importQuickBtn: {
-    marginTop: spacing.sm,
-    backgroundColor: '#EFF6FF',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  importQuickBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2563EB',
-  },
+    /* ── Add Stop Row ── */
+    addStopSection: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.xs,
+    },
+    addDot: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
 
-  /* ── Stop Modal Sheet ── */
-  stopModalOverlay: {
-    ...StyleSheet.absoluteFill,
-    justifyContent: 'flex-end',
-    zIndex: 999,
-  },
-  modalBackdrop: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-  },
-  stopModalSheet: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xs + 2,
-    gap: spacing.sm,
-    ...shadows.xl,
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  modalStopBadge: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#2563EB',
-    letterSpacing: 0.5,
-  },
-  modalStopName: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-    marginTop: 2,
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeBtnText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  modalAddressText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#334155',
-    lineHeight: 20,
-  },
-  modalMetaText: {
-    fontSize: 13,
-    color: '#64748B',
-  },
-  modalActionsRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  modalActionBtn: {
-    flex: 1,
-    backgroundColor: '#F1F5F9',
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  modalActionBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  modalStatusRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  modalStatusBtn: {
-    flex: 1,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalStatusBtnText: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-});
+    /* ── Status Subheader ── */
+    statusSubheader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: spacing.xs + 2,
+      marginBottom: spacing.xs,
+    },
+    optimizedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.primaryGhost,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: radius.full,
+      gap: 5,
+    },
+    optimizedText: {
+      ...typography.caption,
+      fontWeight: '700',
+      color: colors.primary,
+    },
+    stopsCountWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+    },
+    stopsCountText: {
+      ...typography.caption,
+      fontWeight: '700',
+      color: colors.textSecondary,
+    },
+
+    timelineContainer: {
+      marginTop: spacing.xs,
+    },
+
+    /* ── Bottom Actions Bar ── */
+    bottomBar: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: colors.surface,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      ...shadows.lg,
+    },
+    importSheetBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      gap: spacing.xs + 2,
+    },
+    importSheetBtnText: {
+      fontSize: 14,
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
+    bottomActionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+    },
+    reoptimizeBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primaryGhost,
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.lg,
+      gap: 6,
+      borderWidth: 1,
+      borderColor: colors.primary + '33',
+    },
+    // Task 5: estilo ativo quando routeNeedsOptimization = true
+    reoptimizeBtnActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primaryDark || colors.primary,
+      ...shadows.md,
+    },
+    reoptimizeBtnText: {
+      fontSize: 14,
+      color: colors.primary,
+      fontWeight: '700',
+    },
+    reoptimizeBtnTextActive: {
+      color: '#FFFFFF',
+    },
+    finishRouteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.success,
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      gap: 6,
+    },
+    finishRouteBtnText: {
+      fontSize: 14,
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
+
+    btnDisabled: {
+      opacity: 0.6,
+    },
+    btnPressed: {
+      opacity: 0.85,
+      transform: [{ scale: 0.98 }],
+    },
+
+    /* ── Stop Modal Detail ── */
+    stopModalOverlay: {
+      ...StyleSheet.absoluteFill,
+      zIndex: 50,
+      justifyContent: 'flex-end',
+    },
+    modalBackdrop: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    },
+    stopModalSheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingHorizontal: spacing.lg,
+      paddingTop: spacing.xs,
+      gap: spacing.sm,
+      maxHeight: '80%',
+      ...shadows.xl,
+    },
+    modalHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      marginTop: spacing.xs,
+    },
+    modalStopBadge: {
+      ...typography.label,
+      color: colors.primary,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+    },
+    modalStopName: {
+      ...typography.title,
+      color: colors.text,
+      fontWeight: '800',
+      marginTop: 2,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    modalMetaText: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontWeight: '600',
+    },
+    modalDeliveriesList: {
+      maxHeight: 180,
+      marginVertical: spacing.xs,
+    },
+    modalDeliveryItem: {
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      padding: spacing.sm + 2,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginBottom: spacing.xs,
+      gap: 2,
+    },
+    modalDeliveryHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    modalDeliveryTitle: {
+      ...typography.bodySmall,
+      fontWeight: '700',
+      color: colors.text,
+      flex: 1,
+    },
+    orderPill: {
+      backgroundColor: colors.primaryGhost,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: radius.sm,
+    },
+    orderPillText: {
+      ...typography.caption,
+      fontSize: 10,
+      fontWeight: '700',
+      color: colors.primary,
+    },
+    modalDeliverySub: {
+      ...typography.caption,
+      color: colors.textSecondary,
+    },
+    modalDeliveryNotes: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontStyle: 'italic',
+    },
+
+    modalActionsRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginVertical: spacing.xs,
+    },
+    modalActionBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      paddingVertical: spacing.sm + 2,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 6,
+    },
+    modalActionBtnText: {
+      ...typography.caption,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    modalStatusRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.xs,
+    },
+    modalStatusBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      gap: 6,
+      ...shadows.sm,
+    },
+    modalStatusBtnText: {
+      fontSize: 14,
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
+  });
+

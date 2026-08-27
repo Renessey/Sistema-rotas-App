@@ -132,7 +132,7 @@ export interface ColumnMappingConfig {
   orderCodeCol?: string;
 }
 
-/* ------------------------- Valhalla types ------------------------- */
+/* ------------------------- Routing & Snap types ------------------------- */
 
 export type Costing = 'auto' | 'motorcycle' | 'bicycle' | 'pedestrian' | 'bus' | 'truck';
 
@@ -192,3 +192,32 @@ export interface GeocodeResult {
     | string;
   formattedAddress?: string;
 }
+
+/* ------------------------- Route Stop Group (Multi-delivery per address) ------------------------- */
+
+export interface RouteStop {
+  stopNumber: number;            // 1, 2, 3...
+  key: string;                   // Chave única do endereço/coordenada
+  coords: LngLat;                // [longitude, latitude]
+  latitude: number;              // Latitude numérica
+  longitude: number;             // Longitude numérica
+  address: string;               // Endereço / Destino principal
+  bairro?: string;
+  city?: string;
+  zipCode?: string;
+  deliveries: DeliveryEntity[];  // Todas as entregas/pacotes deste endereço
+  totalCount: number;            // Total de pacotes neste ponto
+  completedCount: number;        // Pacotes concluídos
+  pendingCount: number;          // Pacotes pendentes
+  failedCount: number;           // Pacotes falhados
+  status: DeliveryStatus;        // Status consolidado da parada
+  timeEstimated?: string;        // Horário estimado (ex: 08:30)
+}
+
+
+/* ------------------------- Routing Provider ------------------------- */
+
+export type RoutingProvider =
+  | 'mapbox'
+  | 'local_fallback';
+

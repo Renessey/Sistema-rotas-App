@@ -1,8 +1,8 @@
 import { RouteOptimizationService } from '../src/services/routing/RouteOptimizationService';
-import { OSRMService } from '../src/services/routing/OSRMService';
+import { MapboxService } from '../src/services/routing/MapboxService';
 import type { LngLat } from '../src/types/geo';
 
-describe('RouteOptimizationService (Open TSP)', () => {
+describe('RouteOptimizationService (Open TSP via Mapbox)', () => {
   const startGPS: LngLat = [-42.8188, -22.9192];
   const stops: LngLat[] = [
     [-42.8150, -22.9150],
@@ -19,11 +19,6 @@ describe('RouteOptimizationService (Open TSP)', () => {
   });
 
   it('deve agrupar entregas vizinhas/mesmo condomínio em sequência imediata', async () => {
-    // Cenário idêntico ao da foto do usuário:
-    // Ponto de partida (GPS): [-42.8188, -22.9192]
-    // Parada A (Condomínio Casa 4): [-42.8180, -22.9190] (índice 0)
-    // Parada B (Condomínio Casa 2 - vizinha imediata da A!): [-42.8182, -22.9193] (índice 1)
-    // Paradas C e D (Bairro distante a 10km): (índices 2 e 3)
     const condoAndFarStops: LngLat[] = [
       [-42.8180, -22.9190], // 0 - Condo Casa 4
       [-42.8182, -22.9193], // 1 - Condo Casa 2 (vizinha!)
@@ -43,23 +38,5 @@ describe('RouteOptimizationService (Open TSP)', () => {
     // E como estão coladas ao ponto de partida, devem ser as primeiras da rota (posições 0 e 1)
     expect(Math.min(posA, posB)).toBe(0);
     expect(Math.max(posA, posB)).toBe(1);
-  });
-});
-
-describe('OSRMService', () => {
-  it('deve dividir waypoints em lotes e garantir ancoragem no GPS', async () => {
-    const startGPS: LngLat = [-42.8188, -22.9192];
-    const waypoints: LngLat[] = [startGPS, [-42.8150, -22.9150]];
-
-    const route = await OSRMService.route(waypoints);
-    if (route) {
-      expect(route.geojson.type).toBe('FeatureCollection');
-      expect(route.geojson.features.length).toBeGreaterThan(0);
-      const coords = route.geojson.features[0].geometry.coordinates;
-      expect(coords.length).toBeGreaterThanOrEqual(2);
-      // Garante que o primeiro ponto é exatamente a coordenada do GPS
-      expect(coords[0][0]).toBeCloseTo(startGPS[0], 5);
-      expect(coords[0][1]).toBeCloseTo(startGPS[1], 5);
-    }
   });
 });

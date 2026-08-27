@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 import { pick, keepLocalCopy, types } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
 import type { ColumnMappingConfig, DeliveryEntity } from '../../types/geo';
+import { GeocodingService } from '../geocoding/GeocodingService';
 import {
   parseCoordinatePair,
   detectStandardColumns,
@@ -13,6 +14,15 @@ export interface ParsedSpreadsheet {
   headers: string[];
   rows: Record<string, unknown>[];
   fileName: string;
+}
+
+export interface GeocodingSnapProgress {
+  current: number;
+  total: number;
+  geocodedCount: number;
+  snappedCount: number;
+  failedCount: number;
+  currentAddress: string;
 }
 
 interface CsvOptions {
@@ -321,6 +331,71 @@ export class ImportService {
         suspiciousCoordsCount,
         missingCoordsCount,
       },
+    };
+  }
+
+  /**
+   * Geolocaliza registros sem coordenadas (via Geocoding) e alinha TODOS os pontos à malha viária (via Snap v2).
+   */
+  static async geolocalizeAndSnapDeliveries(
+    deliveries: Omit<DeliveryEntity, 'id'>[],
+    onProgress?: (progress: GeocodingSnapProgress) => void,
+  ): Promise<{
+    deliveries: Omit<DeliveryEntity, 'id'>[];
+    geocodedCount: number;
+    snappedCount: number;
+    failedCount: number;
+  }> {
+    let geocodedCount = 0;
+    let snappedCount = 0;
+    let failedCount = 0;
+    const enriched: Omit<DeliveryEntity, 'id'>[] = [];
+
+    for (let i = 0; i < deliveries.length; i++) {
+      const d = deliveries[i];
+      onProgress?.({
+        current: i + 1,
+        total: deliveries.length,
+        geocodedCount,
+        snappedCount,
+        failedCount,
+        currentAddress: d.destination || d.address || `Entrega #${i + 1}`,
+      });
+
+      try {
+        const res = await GeocodingService.geocodeAndSnapDelivery(d);
+        if (res && res.latitude !== null && res.longitude !== null) {
+          const wasGeocoded = d.latitude === null || d.longitude === null;
+          if (wasGeocoded) geocodedCount++;
+          if (res.snappedLatitude && res.snappedLongitude) snappedCount++;
+
+          enriched.push({
+            ...d,
+            latitude: res.latitude,
+            longitude: res.longitude,
+            snappedLatitude: res.snappedLatitude,
+            snappedLongitude: res.snappedLongitude,
+            status: 'pending',
+            failReason: null,
+            address: res.formattedAddress || d.address,
+            destination: d.destination || res.formattedAddress || d.address || '',
+          });
+        } else {
+          failedCount++;
+          enriched.push(d);
+        }
+      } catch (err) {
+        console.warn(`[ImportService] Falha ao geocodificar/alinhar entrega ${i + 1}:`, err);
+        failedCount++;
+        enriched.push(d);
+      }
+    }
+
+    return {
+      deliveries: enriched,
+      geocodedCount,
+      snappedCount,
+      failedCount,
     };
   }
 }

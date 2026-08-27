@@ -1,14 +1,19 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows } from '../../theme';
+import { LocateFixed, Layers, Settings, Scissors } from 'lucide-react-native';
 
 export interface FloatingMapControlsProps {
   followGPS: boolean;
   hasRoute: boolean;
+  lassoMode?: boolean;
+  diagStatus?: 'ok' | 'error' | 'unknown';
   onOpenLayers: () => void;
   onFitBounds?: () => void;
   onToggleFollowGPS: () => void;
+  onToggleLasso?: () => void;
+  onOpenSettings?: () => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onRefresh?: () => void;
@@ -16,16 +21,23 @@ export interface FloatingMapControlsProps {
 
 export function FloatingMapControls({
   followGPS,
+  lassoMode = false,
+  diagStatus = 'unknown',
   onOpenLayers,
   onToggleFollowGPS,
+  onToggleLasso,
+  onOpenSettings,
 }: FloatingMapControlsProps) {
   const { colors } = useTheme();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
 
+  const badgeColor =
+    diagStatus === 'ok' ? '#22C55E' : diagStatus === 'error' ? '#EF4444' : '#94A3B8';
+
   return (
     <View style={styles.container} pointerEvents="box-none">
       <View style={styles.floatingStack} pointerEvents="box-none">
-        {/* GPS Centering / Location Target Button (Photo 2) */}
+        {/* GPS Centering / Location Target Button */}
         <Pressable
           style={({ pressed }) => [
             styles.floatingBtn,
@@ -35,22 +47,55 @@ export function FloatingMapControls({
           onPress={onToggleFollowGPS}
           hitSlop={8}
         >
-          <Text style={[styles.btnIcon, followGPS && styles.btnIconActive]}>
-            🎯
-          </Text>
+          <LocateFixed
+            size={22}
+            color={followGPS ? '#FFFFFF' : colors.primary}
+            strokeWidth={2.2}
+          />
         </Pressable>
 
-        {/* Map Layers / Style Button (Photo 2) */}
+        {/* Map Layers / Style Button */}
         <Pressable
-          style={({ pressed }) => [
-            styles.floatingBtn,
-            pressed && styles.btnPressed,
-          ]}
+          style={({ pressed }) => [styles.floatingBtn, pressed && styles.btnPressed]}
           onPress={onOpenLayers}
           hitSlop={8}
         >
-          <Text style={styles.btnIcon}>🗺️</Text>
+          <Layers size={22} color={colors.textSecondary} strokeWidth={2} />
         </Pressable>
+
+        {/* Lasso Tool Button */}
+        {onToggleLasso && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.floatingBtn,
+              lassoMode && styles.floatingBtnLasso,
+              pressed && styles.btnPressed,
+            ]}
+            onPress={onToggleLasso}
+            hitSlop={8}
+          >
+            <Scissors
+              size={20}
+              color={lassoMode ? '#FFFFFF' : colors.textSecondary}
+              strokeWidth={2}
+            />
+          </Pressable>
+        )}
+
+        {/* Settings Button with Diag Status Badge */}
+        {onOpenSettings && (
+          <View style={styles.settingsBtnWrap}>
+            <Pressable
+              style={({ pressed }) => [styles.floatingBtn, pressed && styles.btnPressed]}
+              onPress={onOpenSettings}
+              hitSlop={8}
+            >
+              <Settings size={20} color={colors.textSecondary} strokeWidth={2} />
+            </Pressable>
+            {/* Status Badge */}
+            <View style={[styles.statusBadge, { backgroundColor: badgeColor }]} />
+          </View>
+        )}
       </View>
     </View>
   );
@@ -72,26 +117,37 @@ const createStyles = (themeColors: any) =>
       width: 46,
       height: 46,
       borderRadius: radius.md,
-      backgroundColor: '#FFFFFF',
+      backgroundColor: themeColors.surface,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: '#E2E8F0',
+      borderColor: themeColors.border,
       ...shadows.md,
     },
     floatingBtnActive: {
-      backgroundColor: '#2563EB',
-      borderColor: '#1D4ED8',
+      backgroundColor: themeColors.primary,
+      borderColor: themeColors.primaryDark,
     },
-    btnIcon: {
-      fontSize: 20,
-      color: themeColors.text,
-    },
-    btnIconActive: {
-      color: '#FFFFFF',
+    floatingBtnLasso: {
+      backgroundColor: '#7C3AED',
+      borderColor: '#6D28D9',
     },
     btnPressed: {
       opacity: 0.85,
       transform: [{ scale: 0.95 }],
+    },
+    settingsBtnWrap: {
+      position: 'relative',
+    },
+    statusBadge: {
+      position: 'absolute',
+      top: -3,
+      right: -3,
+      width: 11,
+      height: 11,
+      borderRadius: 5.5,
+      borderWidth: 2,
+      borderColor: themeColors.background,
+      zIndex: 5,
     },
   });

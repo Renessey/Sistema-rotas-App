@@ -1,8 +1,4 @@
 declare module '@env' {
-  export const APP_ENV: string | undefined;
-  export const GOOGLE_MAPS_API_KEY: string | undefined;
+  export const APP_ENV: string;
+  export const MAPBOX_ACCESS_TOKEN: string;
 }
-
-declare const process: {
-  env: Record<string, string | undefined>;
-};

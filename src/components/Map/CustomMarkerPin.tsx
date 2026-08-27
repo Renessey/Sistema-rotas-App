@@ -1,7 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
-import { colors, shadows } from '../../theme';
+import { shadows } from '../../theme';
+import { useTheme } from '../../theme/ThemeContext';
 import type { DeliveryStatus } from '../../types/geo';
+import { Check, X } from 'lucide-react-native';
 
 export interface CustomMarkerPinProps {
   sequenceNumber?: number | string;
@@ -10,6 +12,7 @@ export interface CustomMarkerPinProps {
   isNext?: boolean;
   isCompleted?: boolean;
   isFailed?: boolean;
+  isLassoSelected?: boolean;
   count?: number;
 }
 
@@ -20,19 +23,23 @@ export function CustomMarkerPin({
   isNext = false,
   isCompleted = false,
   isFailed = false,
+  isLassoSelected = false,
   count = 1,
 }: CustomMarkerPinProps) {
+  const { colors } = useTheme();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseOpacity = useRef(new Animated.Value(0.6)).current;
 
-  // Format sequence number as two digits (e.g. 01, 02, 06, 07)
+  // Formata o número da parada como 2 dígitos (ex: 01, 02, 06...)
   const formattedNumber =
     typeof sequenceNumber === 'number'
       ? String(sequenceNumber).padStart(2, '0')
       : String(sequenceNumber);
 
+  const isCurrentActive = isNext || isActive;
+
   useEffect(() => {
-    if (isNext || isActive) {
+    if (isCurrentActive) {
       const pulseLoop = Animated.loop(
         Animated.parallel([
           Animated.sequence([
@@ -64,20 +71,25 @@ export function CustomMarkerPin({
       pulseLoop.start();
       return () => pulseLoop.stop();
     }
-  }, [isNext, isActive, pulseAnim, pulseOpacity]);
+  }, [isCurrentActive, pulseAnim, pulseOpacity]);
 
-  // Determine styles matching photos 1 & 2
-  // Photos show:
-  // - Next / Active / First stop (e.g. 01): Solid blue tag with white text
-  // - Other pending stops (02, 06, 07...): White tag with blue border and blue text
-  const isFilledBlue = isNext || isActive || formattedNumber === '01';
+  // Esquema de Cores:
+  // - Selecionado pelo Laço: Roxo vibrante (#7C3AED) com borda (#6D28D9) e texto branco (Screenshot 2)
+  // - Parada Atual (isCurrentActive): Azul Escuro (#1D4ED8) com texto branco
+  // - Paradas Restantes: Azul Claro (#DBEAFE) com borda azul (#3B82F6) e texto azul escuro
+  // - Concluídas: Verde Esmeralda (#10B981)
+  // - Falhas: Vermelho (#EF4444)
+  let bgColor = '#DBEAFE';
+  let borderColor = '#3B82F6';
+  let textColor = '#1D4ED8';
+  let caretColor = '#3B82F6';
 
-  let bgColor = '#FFFFFF';
-  let borderColor = '#2563EB';
-  let textColor = '#2563EB';
-  let caretColor = '#2563EB';
-
-  if (isCompleted || status === 'completed') {
+  if (isLassoSelected) {
+    bgColor = '#7C3AED';
+    borderColor = '#A78BFA';
+    caretColor = '#7C3AED';
+    textColor = '#FFFFFF';
+  } else if (isCompleted || status === 'completed') {
     bgColor = colors.success;
     borderColor = colors.success;
     caretColor = colors.success;
@@ -87,22 +99,22 @@ export function CustomMarkerPin({
     borderColor = colors.danger;
     caretColor = colors.danger;
     textColor = '#FFFFFF';
-  } else if (isFilledBlue) {
-    bgColor = '#2563EB';
-    borderColor = '#1D4ED8';
-    caretColor = '#2563EB';
+  } else if (isCurrentActive) {
+    bgColor = '#1D4ED8';
+    borderColor = '#1E3A8A';
+    caretColor = '#1D4ED8';
     textColor = '#FFFFFF';
   }
 
   return (
     <View style={styles.container}>
-      {/* Pulse effect for next / active stop */}
-      {(isNext || isActive) && (
+      {/* Pulse effect para a parada atual / ativa */}
+      {isCurrentActive && (
         <Animated.View
           style={[
             styles.pulseRing,
             {
-              backgroundColor: isNext ? '#2563EB' : colors.warning,
+              backgroundColor: '#1D4ED8',
               transform: [{ scale: pulseAnim }],
               opacity: pulseOpacity,
             },
@@ -118,26 +130,26 @@ export function CustomMarkerPin({
             backgroundColor: bgColor,
             borderColor: borderColor,
           },
-          (isNext || isActive) && styles.badgeActive,
+          isCurrentActive && styles.badgeActive,
         ]}
       >
         {isCompleted || status === 'completed' ? (
-          <Text style={styles.iconText}>✓</Text>
+          <Check size={14} color="#FFFFFF" strokeWidth={3} />
         ) : isFailed || status === 'failed' ? (
-          <Text style={styles.iconText}>✕</Text>
+          <X size={14} color="#FFFFFF" strokeWidth={3} />
         ) : (
           <Text
             style={[
               styles.numberText,
               { color: textColor },
-              isFilledBlue && styles.numberTextFilled,
+              isCurrentActive && styles.numberTextFilled,
             ]}
           >
             {formattedNumber}
           </Text>
         )}
 
-        {/* Count badge for stacked stops */}
+        {/* Badge contador quando há mais de 1 entrega no mesmo endereço */}
         {count > 1 && (
           <View style={styles.countBadge}>
             <Text style={styles.countBadgeText}>{count}</Text>
@@ -145,7 +157,7 @@ export function CustomMarkerPin({
         )}
       </View>
 
-      {/* Pointer Caret pointing precisely to coordinates */}
+      {/* Ponteiro para coordenada exata */}
       <View style={[styles.caret, { borderTopColor: caretColor }]} />
     </View>
   );

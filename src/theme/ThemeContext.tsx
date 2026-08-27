@@ -97,34 +97,66 @@ export const darkColors = {
   gradientDark: ['#0f172a', '#020617'],
 };
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 export type Colors = typeof lightColors;
 
 interface ThemeContextData {
   theme: ThemeType;
   colors: Colors;
   toggleTheme: () => void;
+  setThemeMode: (mode: ThemeType) => void;
 }
+
+const THEME_STORAGE_KEY = '@routes_app_theme';
 
 export const ThemeContext = createContext<ThemeContextData>({
   theme: 'light',
   colors: lightColors,
   toggleTheme: () => {},
+  setThemeMode: () => {},
 });
 
-export const ThemeProvider: React.FC<{children: React.ReactNode}> = ({ children }) => {
+export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setTheme] = useState<ThemeType>('light');
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+        if (saved === 'light' || saved === 'dark') {
+          setTheme(saved);
+        } else {
+          const sys = Appearance.getColorScheme();
+          if (sys === 'dark') setTheme('dark');
+        }
+      } catch (e) {
+        console.warn('[ThemeContext] Erro ao carregar tema:', e);
+      }
+    })();
+  }, []);
+
   const toggleTheme = () => {
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+    setTheme((prev) => {
+      const next = prev === 'light' ? 'dark' : 'light';
+      AsyncStorage.setItem(THEME_STORAGE_KEY, next).catch(() => {});
+      return next;
+    });
   };
 
-  const currentColors = theme === 'light' ? lightColors : darkColors;
+  const setThemeMode = (mode: ThemeType) => {
+    setTheme(mode);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, mode).catch(() => {});
+  };
+
+  const currentColors = useMemo(() => (theme === 'light' ? lightColors : darkColors), [theme]);
 
   return (
-    <ThemeContext.Provider value={{ theme, colors: currentColors, toggleTheme }}>
+    <ThemeContext.Provider value={{ theme, colors: currentColors, toggleTheme, setThemeMode }}>
       {children}
     </ThemeContext.Provider>
   );
 };
 
 export const useTheme = () => useContext(ThemeContext);
+

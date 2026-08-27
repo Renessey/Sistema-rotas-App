@@ -145,7 +145,7 @@ export interface AddressQueryParams {
   cep?: string;
 }
 
-export function buildGoogleGeocodingQuery(
+export function buildAddressQuery(
   input: string | AddressQueryParams,
   bairro?: string | null,
   city?: string | null,
@@ -200,3 +200,6 @@ export function buildGoogleGeocodingQuery(
   if (cep) parts.push(cep.trim());
   return parts.join(', ');
 }
+
+export const buildGoogleGeocodingQuery = buildAddressQuery;
+

@@ -9,7 +9,6 @@ import {
   ScrollView,
   Animated,
   PanResponder,
-  type ViewStyle,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
@@ -20,6 +19,7 @@ import {
   MapTheme,
 } from '../../config/mapStyles';
 import type { Costing } from '../../types/geo';
+import { X, Car, Truck, Bike } from 'lucide-react-native';
 
 export interface MapDisplayModalProps {
   visible: boolean;
@@ -34,12 +34,13 @@ export interface MapDisplayModalProps {
   onSelectCostingMode?: (mode: Costing) => void;
 }
 
-const VEHICLE_MODES: { id: Costing; label: string; icon: string; desc: string }[] = [
-  { id: 'auto', label: 'Carro / Van', icon: '🚗', desc: 'Vias urbanas e rodovias' },
-  { id: 'truck', label: 'Caminhão', icon: '🚛', desc: 'Restrições de carga/peso' },
-  { id: 'motorcycle', label: 'Moto', icon: '🏍️', desc: 'Rotas rápidas e corredores' },
-  { id: 'bicycle', label: 'Bicicleta', icon: '🚲', desc: 'Ciclovias e vias lentas' },
+const VEHICLE_MODES: { id: Costing; label: string; Icon: React.ComponentType<{ size: number; color: string }>; desc: string }[] = [
+  { id: 'auto', label: 'Carro / Van', Icon: Car, desc: 'Vias urbanas e rodovias' },
+  { id: 'truck', label: 'Caminhão', Icon: Truck, desc: 'Restrições de carga/peso' },
+  { id: 'motorcycle', label: 'Moto', Icon: Bike, desc: 'Rotas rápidas e corredores' },
+  { id: 'bicycle', label: 'Bicicleta', Icon: Bike, desc: 'Ciclovias e vias lentas' },
 ];
+
 
 export function MapDisplayModal({
   visible,
@@ -222,6 +223,7 @@ export function MapDisplayModal({
                 <View style={styles.vehicleGrid}>
                   {VEHICLE_MODES.map((v) => {
                     const isSelected = costingMode === v.id;
+                    const VIcon = v.Icon;
                     return (
                       <Pressable
                         key={v.id}
@@ -231,7 +233,7 @@ export function MapDisplayModal({
                         ]}
                         onPress={() => onSelectCostingMode(v.id)}
                       >
-                        <Text style={styles.vehicleIcon}>{v.icon}</Text>
+                        <VIcon size={22} color={isSelected ? colors.primary : colors.textSecondary} />
                         <Text
                           style={[
                             styles.vehicleLabel,
@@ -247,6 +249,7 @@ export function MapDisplayModal({
                 </View>
               </View>
             )}
+
 
             {/* 4. Opções de Filtro */}
             <View style={styles.section}>

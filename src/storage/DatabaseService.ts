@@ -507,4 +507,16 @@ export class DatabaseService {
       // ignore
     }
   }
+
+  static deleteDelivery(id: number): void {
+    const db = this.getDb();
+    db.executeSync('DELETE FROM deliveries WHERE id = ?;', [id]);
+  }
+
+  static deleteDeliveries(ids: number[]): void {
+    if (ids.length === 0) return;
+    const db = this.getDb();
+    const placeholders = ids.map(() => '?').join(',');
+    db.executeSync(`DELETE FROM deliveries WHERE id IN (${placeholders});`, ids);
+  }
 }

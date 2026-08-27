@@ -32,22 +32,22 @@ describe('Map Styles & Preferences Module', () => {
 
   test('getMapStyleUrl returns correct style URLs for different themes', () => {
     const standardClassic = getMapStyleUrl('standard', 'classic');
-    expect(standardClassic).toContain('streets-v2');
+    expect(standardClassic).toContain('navigation-day-v1');
 
     const standardDark = getMapStyleUrl('standard', 'dark');
-    expect(standardDark).toContain('dataviz-dark');
+    expect(standardDark).toContain('navigation-night-v1');
 
     const standardApple = getMapStyleUrl('standard', 'apple');
-    expect(standardApple).toContain('voyager');
+    expect(standardApple).toContain('streets-v12');
 
     const standardMinimal = getMapStyleUrl('standard', 'minimal');
-    expect(standardMinimal).toContain('dataviz-light');
+    expect(standardMinimal).toContain('light-v11');
 
     const satelliteClassic = getMapStyleUrl('satellite', 'classic');
-    expect(satelliteClassic).toContain('hybrid');
+    expect(satelliteClassic).toContain('satellite-streets-v12');
 
     const terrainClassic = getMapStyleUrl('terrain', 'classic');
-    expect(terrainClassic).toContain('outdoor-v2');
+    expect(terrainClassic).toContain('outdoors-v12');
   });
 
   test('MapStyleService loads default preferences when empty', async () => {

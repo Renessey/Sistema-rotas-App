@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Switch,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -15,17 +16,42 @@ import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
 import { MapStyleService } from '../../services/map/MapStyleService';
 import { DatabaseService } from '../../storage/DatabaseService';
-import { ValhallaService } from '../../services/routing/ValhallaService';
+import { LocationService } from '../../services/gps/LocationService';
+import { RoutingService } from '../../services/routing/RoutingService';
+import { MapboxService } from '../../services/routing/MapboxService';
+import { MapboxQuota } from '../../services/routing/MapboxQuota';
 import { MAP_TYPES, MAP_THEMES, MapType, MapTheme } from '../../config/mapStyles';
-import type { Costing } from '../../types/geo';
+import type { Costing, RoutingProvider } from '../../types/geo';
+import {
+  ArrowLeft,
+  Settings as SettingsIcon,
+  Activity,
+  Moon,
+  Sun,
+  Layers,
+  Car,
+  Truck,
+  Bike,
+  EyeOff,
+  Navigation,
+  HardDrive,
+  Cpu,
+  RefreshCw,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  FlaskConical,
+  Globe,
+  Radio,
+} from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
-const VEHICLES: { id: Costing; label: string; icon: string }[] = [
-  { id: 'auto', label: 'Carro / Van', icon: '🚗' },
-  { id: 'truck', label: 'Caminhão', icon: '🚛' },
-  { id: 'motorcycle', label: 'Motocicleta', icon: '🏍️' },
-  { id: 'bicycle', label: 'Bicicleta', icon: '🚲' },
+const VEHICLES: { id: Costing; label: string; Icon: React.ComponentType<{ size: number; color: string }> }[] = [
+  { id: 'auto', label: 'Carro / Van', Icon: Car },
+  { id: 'truck', label: 'Caminhão', Icon: Truck },
+  { id: 'motorcycle', label: 'Moto', Icon: Bike },
+  { id: 'bicycle', label: 'Bicicleta', Icon: Bike },
 ];
 
 export default function SettingsScreen({ navigation }: Props) {
@@ -37,7 +63,23 @@ export default function SettingsScreen({ navigation }: Props) {
   const [mapTheme, setMapTheme] = useState<MapTheme>('classic');
   const [hideCompleted, setHideCompleted] = useState(false);
   const [costingMode, setCostingMode] = useState<Costing>('auto');
-  const [stats, setStats] = useState({ total: 0, completed: 0, pending: 0, failed: 0, located: 0 });
+  const [routingProvider, setRoutingProvider] = useState<RoutingProvider>('mapbox');
+  const [stats, setStats] = useState({ total: 0, completed: 0, pending: 0, failed: 0, located: 0, invalidCoords: 0 });
+  const [mapboxUsage, setMapboxUsage] = useState({ count: 0, limit: 3000, remaining: 3000 });
+
+  // Diagnósticos
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [gpsStatus, setGpsStatus] = useState<{
+    ok: boolean;
+    lat?: number;
+    lon?: number;
+    accuracy?: number | null;
+    message?: string;
+  }>({ ok: false });
+  const [routerStatus, setRouterStatus] = useState<{ ok: boolean; provider: string }>({
+    ok: MapboxService.isConfigured(),
+    provider: 'Mapbox Directions v5 + OSRM (Fallback)',
+  });
 
   const loadSettings = useCallback(async () => {
     const prefs = await MapStyleService.loadPreferences();
@@ -45,12 +87,52 @@ export default function SettingsScreen({ navigation }: Props) {
     setMapTheme(prefs.mapTheme);
     setHideCompleted(prefs.hideCompleted);
     setCostingMode(prefs.costingMode);
+    setRoutingProvider(prefs.routingProvider || 'mapbox');
     setStats(DatabaseService.getStats());
+
+    try {
+      const quota = await MapboxQuota.getUsage();
+      setMapboxUsage(quota);
+    } catch {}
+  }, []);
+
+  const runDiagnostics = useCallback(async () => {
+    setDiagLoading(true);
+    try {
+      setStats(DatabaseService.getStats());
+      const quota = await MapboxQuota.getUsage();
+      setMapboxUsage(quota);
+    } catch {}
+
+    try {
+      const perm = await LocationService.requestPermission();
+      if (perm === 'granted') {
+        const pos = await LocationService.getCurrentPosition();
+        setGpsStatus({
+          ok: true,
+          lat: pos.latitude,
+          lon: pos.longitude,
+          accuracy: pos.accuracy,
+        });
+      } else {
+        setGpsStatus({ ok: false, message: 'Permissão de GPS negada' });
+      }
+    } catch (e: any) {
+      setGpsStatus({ ok: false, message: e?.message || 'GPS desligado' });
+    }
+
+    try {
+      const meta = RoutingService.getRegionMetadata();
+      setRouterStatus({ ok: MapboxService.isConfigured(), provider: meta.municipalities.join(', ') });
+    } catch {}
+
+    setDiagLoading(false);
   }, []);
 
   useEffect(() => {
     loadSettings();
-  }, [loadSettings]);
+    runDiagnostics();
+  }, [loadSettings, runDiagnostics]);
 
   const handleUpdateType = async (type: MapType) => {
     setMapType(type);
@@ -72,6 +154,11 @@ export default function SettingsScreen({ navigation }: Props) {
     await MapStyleService.setCostingMode(mode);
   };
 
+  const handleUpdateProvider = async (p: RoutingProvider) => {
+    setRoutingProvider(p);
+    await MapStyleService.setRoutingProvider(p);
+  };
+
   const handleClearDatabase = () => {
     Alert.alert(
       'Limpar Todas as Entregas?',
@@ -89,6 +176,21 @@ export default function SettingsScreen({ navigation }: Props) {
         },
       ],
     );
+  };
+
+  const testRouteCalculation = async () => {
+    try {
+      const p1: [number, number] = [-42.8188, -22.9192]; // Maricá
+      const p2: [number, number] = [-43.1189, -22.8832]; // Niterói
+
+      const result = await RoutingService.route([p1, p2]);
+      Alert.alert(
+        'Teste de Rota — Mapbox Directions v5',
+        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nProvedor: ${result.geojson.features[0]?.properties?.provider || 'Mapbox'}\nStatus: Traçado de alta precisão com tráfego em tempo real.`,
+      );
+    } catch (e: any) {
+      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota. Verifique a conexão.');
+    }
   };
 
   return (
@@ -111,46 +213,164 @@ export default function SettingsScreen({ navigation }: Props) {
             onPress={() => navigation.goBack()}
             hitSlop={8}
           >
-            <Text style={styles.backBtnText}>← Voltar</Text>
+            <ArrowLeft size={16} color={colors.primary} />
+            <Text style={styles.backBtnText}>Voltar</Text>
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.refreshBtn, pressed && styles.btnPressed]}
+            onPress={runDiagnostics}
+            hitSlop={8}
+          >
+            <RefreshCw size={14} color={colors.textSecondary} />
+            <Text style={styles.refreshBtnText}>Atualizar Diagnóstico</Text>
           </Pressable>
         </View>
 
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.headerTitle}>Configurações</Text>
-            <Text style={styles.headerSubtitle}>Preferências gerais e do mapa</Text>
+            <Text style={styles.headerSubtitle}>Preferências, Roteamento e Diagnóstico</Text>
           </View>
           <View style={styles.headerBadge}>
-            <Text style={styles.headerBadgeIcon}>⚙️</Text>
+            <SettingsIcon size={24} color={colors.primary} />
           </View>
         </View>
 
-        {/* 1. Diagnóstico do Sistema (Atalho Principal) */}
-        <Pressable
-          style={styles.diagCard}
-          onPress={() => navigation.navigate('Diagnostic')}
-        >
-          <View style={styles.diagCardLeft}>
-            <View style={styles.diagIconBadge}>
-              <Text style={styles.diagIcon}>🩺</Text>
-            </View>
-            <View style={styles.diagTextCol}>
-              <Text style={styles.diagTitle}>Diagnóstico do Sistema 100% Offline</Text>
-              <Text style={styles.diagSub}>Status de GPS, SQLite, Valhalla e MapLibre</Text>
-            </View>
-          </View>
-          <Text style={styles.diagChevron}>›</Text>
-        </Pressable>
-
-        {/* 2. Tema do Aplicativo (Claro / Escuro) */}
+        {/* 1. Provedor de Roteamento */}
         <View style={styles.card}>
-          <Text style={styles.sectionHeader}>APARÊNCIA DO APLICATIVO</Text>
+          <View style={styles.cardTitleRow}>
+            <Globe size={16} color={colors.primary} />
+            <Text style={styles.sectionHeader}>MOTOR DE ROTEAMENTO & GPS</Text>
+          </View>
+
+          <Text style={styles.subHeader}>Selecione o provedor de rotas para cálculo do trajeto:</Text>
+          <View style={styles.providerCol}>
+            {/* 1. Mapbox Directions (Motor Principal) */}
+            <Pressable
+              style={[
+                styles.providerCard,
+                routingProvider === 'mapbox' && styles.providerCardActive,
+              ]}
+              onPress={() => handleUpdateProvider('mapbox')}
+            >
+              <View style={styles.providerLeft}>
+                <View
+                  style={[
+                    styles.providerDot,
+                    routingProvider === 'mapbox' && styles.providerDotActive,
+                  ]}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.providerTitle}>Mapbox Directions API v5 (Recomendado)</Text>
+                  <Text style={styles.providerDesc}>
+                    Motor online de alta resolução viária, suporte a tráfego e cota diária de 3.000 req/dia
+                  </Text>
+                </View>
+              </View>
+              <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
+                <Text style={[styles.badgePillText, { color: colors.success }]}>
+                  {mapboxUsage.count}/3000 hoje
+                </Text>
+              </View>
+            </Pressable>
+
+          </View>
+        </View>
+
+        {/* 2. Diagnóstico Completo do Sistema Integrado */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            <Activity size={16} color={colors.primary} />
+            <Text style={styles.sectionHeader}>DIAGNÓSTICO DO SISTEMA</Text>
+            {diagLoading && <ActivityIndicator size="small" color={colors.primary} />}
+          </View>
+
+          {/* GPS Nativo */}
+          <View style={styles.diagSection}>
+            <View style={styles.diagHeaderRow}>
+              <View style={styles.diagTitleLeft}>
+                <Radio size={14} color={colors.textSecondary} />
+                <Text style={styles.diagSectionTitle}>GPS NATIVO DO DISPOSITIVO</Text>
+              </View>
+              <View
+                style={[
+                  styles.badgePill,
+                  { backgroundColor: gpsStatus.ok ? colors.successGhost : colors.dangerGhost },
+                ]}
+              >
+                <Text style={[styles.badgePillText, { color: gpsStatus.ok ? colors.success : colors.danger }]}>
+                  {gpsStatus.ok ? 'Sinal Ativo' : 'Aguardando'}
+                </Text>
+              </View>
+            </View>
+            {gpsStatus.ok ? (
+              <>
+                <DiagRow label="Latitude / Longitude:" value={`${gpsStatus.lat?.toFixed(5)}, ${gpsStatus.lon?.toFixed(5)}`} bold />
+                <DiagRow label="Precisão do Satélite:" value={`±${Math.round(gpsStatus.accuracy ?? 0)} metros`} color={colors.primary} />
+              </>
+            ) : (
+              <DiagRow label="Status do Sensor:" value={gpsStatus.message || 'GPS desligado ou sem permissão'} color={colors.danger} />
+            )}
+          </View>
+
+          {/* Banco SQLite */}
+          <View style={styles.diagSection}>
+            <View style={styles.diagHeaderRow}>
+              <View style={styles.diagTitleLeft}>
+                <HardDrive size={14} color={colors.textSecondary} />
+                <Text style={styles.diagSectionTitle}>BANCO DE DADOS SQLITE</Text>
+              </View>
+              <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
+                <Text style={[styles.badgePillText, { color: colors.success }]}>Operacional</Text>
+              </View>
+            </View>
+            <DiagRow label="Total de entregas no banco:" value={String(stats.total)} bold />
+            <DiagRow label="Entregas com coordenadas válidas:" value={String(stats.located)} color={colors.success} />
+            <DiagRow label="Entregas sem coordenadas:" value={String(stats.invalidCoords)} color={stats.invalidCoords > 0 ? colors.danger : colors.textMuted} />
+            <DiagRow label="Entregas concluídas:" value={String(stats.completed)} color={colors.success} />
+            <DiagRow label="Entregas pendentes:" value={String(stats.pending)} color={colors.warning} />
+          </View>
+
+          {/* Motor de Roteamento */}
+          <View style={styles.diagSection}>
+            <View style={styles.diagHeaderRow}>
+              <View style={styles.diagTitleLeft}>
+                <Cpu size={14} color={colors.textSecondary} />
+                <Text style={styles.diagSectionTitle}>MOTOR DE ROTEAMENTO</Text>
+              </View>
+              <View style={[styles.badgePill, { backgroundColor: routerStatus.ok ? colors.successGhost : colors.warningGhost }]}>
+                <Text style={[styles.badgePillText, { color: routerStatus.ok ? colors.success : colors.warning }]}>
+                  {routerStatus.ok ? 'Mapbox Ativo' : 'OSRM (Fallback)'}
+                </Text>
+              </View>
+            </View>
+            <DiagRow label="Provedor Principal:" value="Mapbox Directions API v5" bold />
+            <DiagRow label="Precisão de Traçado:" value="6 Casas Decimais (1 metro)" color={colors.success} />
+            <DiagRow label="Fallback Automático:" value="OSRM Público (router.project-osrm.org)" color={colors.primary} />
+            <DiagRow label="Renderizador do Mapa:" value="MapLibre Native 11.3 (Vetorial)" />
+          </View>
+
+          {/* Botão Teste de Rota */}
+          <Pressable style={styles.testRouteBtn} onPress={testRouteCalculation}>
+            <FlaskConical size={16} color={colors.primary} />
+            <Text style={styles.testRouteBtnText}>Testar Cálculo de Rota (Maricá ↔ Niterói)</Text>
+          </Pressable>
+        </View>
+
+
+        {/* 3. Tema do Aplicativo (Claro / Escuro) */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            {theme === 'dark' ? <Moon size={16} color={colors.primary} /> : <Sun size={16} color={colors.primary} />}
+            <Text style={styles.sectionHeader}>APARÊNCIA DO APLICATIVO</Text>
+          </View>
+
           <View style={styles.rowBetween}>
             <View style={styles.rowLeft}>
-              <Text style={styles.rowIcon}>{theme === 'dark' ? '🌙' : '☀️'}</Text>
               <View>
                 <Text style={styles.rowTitle}>Modo Escuro (Dark Mode)</Text>
-                <Text style={styles.rowSub}>Interface com tema noturno</Text>
+                <Text style={styles.rowSub}>Interface com tema noturno em todo o aplicativo</Text>
               </View>
             </View>
             <Switch
@@ -162,9 +382,12 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 3. Tipo e Estilo do Mapa */}
+        {/* 4. Tipo e Estilo do Mapa */}
         <View style={styles.card}>
-          <Text style={styles.sectionHeader}>ESTILO PADRÃO DO MAPA</Text>
+          <View style={styles.cardTitleRow}>
+            <Layers size={16} color={colors.primary} />
+            <Text style={styles.sectionHeader}>ESTILO PADRÃO DO MAPA</Text>
+          </View>
 
           <Text style={styles.subHeader}>Tipo de Camada</Text>
           <View style={styles.chipRow}>
@@ -174,7 +397,6 @@ export default function SettingsScreen({ navigation }: Props) {
                 style={[styles.chip, mapType === t.id && styles.chipActive]}
                 onPress={() => handleUpdateType(t.id)}
               >
-                <Text style={styles.chipIcon}>{t.icon}</Text>
                 <Text style={[styles.chipText, mapType === t.id && styles.chipTextActive]}>
                   {t.label}
                 </Text>
@@ -190,7 +412,6 @@ export default function SettingsScreen({ navigation }: Props) {
                 style={[styles.themeBox, mapTheme === th.id && styles.themeBoxActive]}
                 onPress={() => handleUpdateTheme(th.id)}
               >
-                <Text style={styles.themeBoxIcon}>{th.icon}</Text>
                 <Text style={[styles.themeBoxLabel, mapTheme === th.id && styles.themeBoxLabelActive]}>
                   {th.label}
                 </Text>
@@ -199,35 +420,42 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 4. Modo de Roteamento / Veículo */}
+        {/* 5. Modo de Roteamento / Veículo */}
         <View style={styles.card}>
-          <Text style={styles.sectionHeader}>ROTEAMENTO & VEÍCULO</Text>
+          <View style={styles.cardTitleRow}>
+            <Navigation size={16} color={colors.primary} />
+            <Text style={styles.sectionHeader}>VEÍCULO & OPÇÕES DE ROTA</Text>
+          </View>
 
           <Text style={styles.subHeader}>Veículo Principal</Text>
           <View style={styles.vehicleRow}>
-            {VEHICLES.map((v) => (
-              <Pressable
-                key={v.id}
-                style={[styles.vehicleBtn, costingMode === v.id && styles.vehicleBtnActive]}
-                onPress={() => handleUpdateCosting(v.id)}
-              >
-                <Text style={styles.vehicleBtnIcon}>{v.icon}</Text>
-                <Text
-                  style={[
-                    styles.vehicleBtnLabel,
-                    costingMode === v.id && styles.vehicleBtnLabelActive,
-                  ]}
-                  numberOfLines={1}
+            {VEHICLES.map((v) => {
+              const VIcon = v.Icon;
+              const isSel = costingMode === v.id;
+              return (
+                <Pressable
+                  key={v.id}
+                  style={[styles.vehicleBtn, isSel && styles.vehicleBtnActive]}
+                  onPress={() => handleUpdateCosting(v.id)}
                 >
-                  {v.label}
-                </Text>
-              </Pressable>
-            ))}
+                  <VIcon size={16} color={isSel ? colors.primary : colors.textSecondary} />
+                  <Text
+                    style={[
+                      styles.vehicleBtnLabel,
+                      isSel && styles.vehicleBtnLabelActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {v.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
 
           <View style={[styles.rowBetween, { marginTop: spacing.md, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border }]}>
             <View style={styles.rowLeft}>
-              <Text style={styles.rowIcon}>🎯</Text>
+              <EyeOff size={16} color={colors.textSecondary} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.rowTitle}>Ocultar paradas concluídas</Text>
                 <Text style={styles.rowSub}>Não exibir markers de entregas finalizadas</Text>
@@ -242,45 +470,70 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 5. Informações do Motor Offline */}
-        <View style={styles.card}>
-          <Text style={styles.sectionHeader}>MOTOR DE ROTAS EMBUTIDO</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Motor:</Text>
-            <Text style={[styles.infoValue, { color: colors.success }]}>Valhalla Local (Offline)</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Região Mapeada:</Text>
-            <Text style={styles.infoValue}>Maricá · Niterói · São Gonçalo</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Localização das Entregas:</Text>
-            <Text style={styles.infoValue}>Coordenadas exatas da planilha</Text>
-          </View>
-        </View>
-
         {/* 6. Gestão de Dados */}
         <View style={styles.card}>
-          <Text style={styles.sectionHeader}>DADOS & ARMAZENAMENTO</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Total de entregas salvas:</Text>
-            <Text style={styles.infoValueBold}>{stats.total}</Text>
+          <View style={styles.cardTitleRow}>
+            <Trash2 size={16} color={colors.danger} />
+            <Text style={[styles.sectionHeader, { color: colors.danger }]}>DADOS & LIMPEZA</Text>
           </View>
+          <DiagRow label="Total de entregas salvas:" value={String(stats.total)} bold />
 
           <Pressable style={styles.dangerBtn} onPress={handleClearDatabase}>
-            <Text style={styles.dangerBtnText}>🗑️ Limpar Banco de Entregas</Text>
+            <Trash2 size={15} color={colors.danger} />
+            <Text style={styles.dangerBtnText}>Limpar Banco de Entregas</Text>
           </Pressable>
         </View>
 
         {/* Informações da Versão */}
         <View style={styles.footerInfo}>
-          <Text style={styles.footerText}>RotaSimples v2.0 (100% Offline)</Text>
-          <Text style={styles.footerSubText}>Valhalla Local · Maricá, Niterói e São Gonçalo</Text>
+          <Text style={styles.footerText}>RotaSimples v2.1</Text>
+          <Text style={styles.footerSubText}>Mapbox Directions API v5 + MapLibre Native</Text>
         </View>
       </ScrollView>
     </View>
   );
 }
+
+function DiagRow({
+  label,
+  value,
+  bold,
+  color,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  color?: string;
+}) {
+  const { colors } = useTheme();
+  return (
+    <View style={diagStyles.row}>
+      <Text style={[diagStyles.label, { color: colors.textMuted }]}>{label}</Text>
+      <Text
+        style={[
+          diagStyles.value,
+          { color: color || colors.text },
+          bold && diagStyles.valueBold,
+        ]}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+const diagStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    paddingVertical: 2,
+    gap: spacing.sm,
+  },
+  label: { ...typography.caption, flex: 1 },
+  value: { ...typography.caption, fontWeight: '500', textAlign: 'right', flex: 1.2 },
+  valueBold: { fontWeight: '700' },
+});
 
 const createStyles = (colors: any) =>
   StyleSheet.create({
@@ -288,21 +541,42 @@ const createStyles = (colors: any) =>
     topBar: {
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'space-between',
       paddingVertical: spacing.xs,
     },
     backBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: colors.surface,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs + 2,
       borderRadius: radius.md,
       borderWidth: 1,
       borderColor: colors.border,
+      gap: 6,
       ...shadows.sm,
     },
     backBtnText: {
       fontSize: 14,
       fontWeight: '700',
       color: colors.primary,
+    },
+    refreshBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs + 2,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 6,
+      ...shadows.sm,
+    },
+    refreshBtnText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
     },
     btnPressed: {
       opacity: 0.8,
@@ -332,49 +606,6 @@ const createStyles = (colors: any) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    headerBadgeIcon: { fontSize: 24 },
-
-    diagCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: colors.surface,
-      borderRadius: radius.md,
-      padding: spacing.md,
-      borderWidth: 1.5,
-      borderColor: colors.primary + '55',
-      ...shadows.md,
-    },
-    diagCardLeft: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.md,
-      flex: 1,
-    },
-    diagIconBadge: {
-      width: 42,
-      height: 42,
-      borderRadius: radius.md,
-      backgroundColor: colors.primaryGhost,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    diagIcon: { fontSize: 22 },
-    diagTextCol: { flex: 1, gap: 2 },
-    diagTitle: {
-      ...typography.bodyMedium,
-      fontWeight: '700',
-      color: colors.text,
-    },
-    diagSub: {
-      ...typography.caption,
-      color: colors.textMuted,
-    },
-    diagChevron: {
-      fontSize: 24,
-      fontWeight: '700',
-      color: colors.primary,
-    },
 
     card: {
       backgroundColor: colors.surface,
@@ -385,11 +616,18 @@ const createStyles = (colors: any) =>
       gap: spacing.sm,
       ...shadows.sm,
     },
+    cardTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs + 2,
+      marginBottom: 2,
+    },
     sectionHeader: {
       ...typography.label,
-      color: colors.textMuted,
+      color: colors.textSecondary,
       fontWeight: '700',
-      letterSpacing: 0.8,
+      letterSpacing: 0.6,
+      flex: 1,
     },
     subHeader: {
       ...typography.caption,
@@ -397,6 +635,114 @@ const createStyles = (colors: any) =>
       fontWeight: '600',
       marginTop: spacing.xs,
     },
+
+    providerCol: {
+      gap: spacing.xs + 2,
+      marginTop: spacing.xs,
+    },
+    providerCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      gap: spacing.sm,
+    },
+    providerCardActive: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primaryGhost,
+    },
+    providerLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      flex: 1,
+    },
+    providerDot: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      borderWidth: 2,
+      borderColor: colors.borderStrong,
+    },
+    providerDotActive: {
+      borderColor: colors.primary,
+      backgroundColor: colors.primary,
+    },
+    providerTitle: {
+      ...typography.bodySmall,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    providerDesc: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontSize: 11,
+      marginTop: 1,
+    },
+
+    diagSection: {
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      padding: spacing.sm + 2,
+      gap: 2,
+      borderWidth: 1,
+      borderColor: colors.border,
+      marginTop: 2,
+    },
+    diagHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+      paddingBottom: 4,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    diagTitleLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    diagSectionTitle: {
+      ...typography.label,
+      fontSize: 11,
+      color: colors.textSecondary,
+      fontWeight: '700',
+    },
+    badgePill: {
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+    },
+    badgePillText: {
+      ...typography.caption,
+      fontSize: 10,
+      fontWeight: '700',
+    },
+
+    testRouteBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primaryGhost,
+      borderRadius: radius.md,
+      paddingVertical: spacing.sm + 2,
+      paddingHorizontal: spacing.md,
+      borderWidth: 1,
+      borderColor: colors.primary + '44',
+      marginTop: spacing.xs,
+      gap: 6,
+    },
+    testRouteBtnText: {
+      ...typography.caption,
+      fontWeight: '700',
+      color: colors.primary,
+    },
+
     rowBetween: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -409,7 +755,6 @@ const createStyles = (colors: any) =>
       gap: spacing.sm,
       flex: 1,
     },
-    rowIcon: { fontSize: 20 },
     rowTitle: {
       ...typography.bodyMedium,
       color: colors.text,
@@ -437,7 +782,6 @@ const createStyles = (colors: any) =>
       borderColor: colors.primary,
       backgroundColor: colors.primaryGhost,
     },
-    chipIcon: { fontSize: 14 },
     chipText: {
       ...typography.caption,
       color: colors.textSecondary,
@@ -453,6 +797,7 @@ const createStyles = (colors: any) =>
       flexGrow: 1,
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'center',
       backgroundColor: colors.surfaceElevated,
       borderRadius: radius.md,
       padding: spacing.sm,
@@ -464,7 +809,6 @@ const createStyles = (colors: any) =>
       borderColor: colors.primary,
       backgroundColor: colors.primaryGhost,
     },
-    themeBoxIcon: { fontSize: 16 },
     themeBoxLabel: {
       ...typography.caption,
       color: colors.textSecondary,
@@ -491,7 +835,6 @@ const createStyles = (colors: any) =>
       borderColor: colors.primary,
       backgroundColor: colors.primaryGhost,
     },
-    vehicleBtnIcon: { fontSize: 16 },
     vehicleBtnLabel: {
       ...typography.caption,
       color: colors.textSecondary,
@@ -501,28 +844,18 @@ const createStyles = (colors: any) =>
       color: colors.primary,
       fontWeight: '700',
     },
-    infoRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      paddingVertical: 2,
-    },
-    infoLabel: { ...typography.caption, color: colors.textMuted },
-    infoValue: { ...typography.caption, fontWeight: '600', color: colors.text },
-    infoValueBold: {
-      ...typography.bodyMedium,
-      fontWeight: '700',
-      color: colors.text,
-    },
+
     dangerBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
       backgroundColor: colors.dangerGhost,
       borderRadius: radius.md,
       paddingVertical: spacing.sm + 2,
-      alignItems: 'center',
-      justifyContent: 'center',
       borderWidth: 1,
       borderColor: colors.danger + '33',
       marginTop: spacing.xs,
+      gap: 6,
     },
     dangerBtnText: {
       ...typography.caption,

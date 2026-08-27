@@ -1,12 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MapType, MapTheme, getMapStyleUrl } from '../../config/mapStyles';
-import type { Costing } from '../../types/geo';
+import type { Costing, RoutingProvider } from '../../types/geo';
 
 export interface MapPreferences {
   mapType: MapType;
   mapTheme: MapTheme;
   hideCompleted: boolean;
   costingMode: Costing;
+  routingProvider: RoutingProvider;
 }
 
 const STORAGE_KEYS = {
@@ -14,6 +15,7 @@ const STORAGE_KEYS = {
   MAP_THEME: '@routes_map_theme',
   HIDE_COMPLETED: '@routes_hide_completed_stops',
   COSTING_MODE: '@routes_costing_mode',
+  ROUTING_PROVIDER: '@routes_routing_provider',
 };
 
 const DEFAULT_PREFERENCES: MapPreferences = {
@@ -21,6 +23,7 @@ const DEFAULT_PREFERENCES: MapPreferences = {
   mapTheme: 'classic',
   hideCompleted: false,
   costingMode: 'auto',
+  routingProvider: 'mapbox',
 };
 
 export class MapStyleService {
@@ -32,11 +35,12 @@ export class MapStyleService {
    */
   static async loadPreferences(): Promise<MapPreferences> {
     try {
-      const [typeVal, themeVal, hideVal, costVal] = await Promise.all([
+      const [typeVal, themeVal, hideVal, costVal, providerVal] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEYS.MAP_TYPE),
         AsyncStorage.getItem(STORAGE_KEYS.MAP_THEME),
         AsyncStorage.getItem(STORAGE_KEYS.HIDE_COMPLETED),
         AsyncStorage.getItem(STORAGE_KEYS.COSTING_MODE),
+        AsyncStorage.getItem(STORAGE_KEYS.ROUTING_PROVIDER),
       ]);
 
       MapStyleService.cachedPrefs = {
@@ -44,6 +48,7 @@ export class MapStyleService {
         mapTheme: (themeVal as MapTheme) || DEFAULT_PREFERENCES.mapTheme,
         hideCompleted: hideVal !== null ? hideVal === 'true' : DEFAULT_PREFERENCES.hideCompleted,
         costingMode: (costVal as Costing) || DEFAULT_PREFERENCES.costingMode,
+        routingProvider: (providerVal as RoutingProvider) || DEFAULT_PREFERENCES.routingProvider,
       };
       MapStyleService.initialized = true;
       return { ...MapStyleService.cachedPrefs };
@@ -52,6 +57,19 @@ export class MapStyleService {
       return { ...DEFAULT_PREFERENCES };
     }
   }
+
+  /**
+   * Updates routing provider and persists to storage.
+   */
+  static async setRoutingProvider(provider: RoutingProvider): Promise<void> {
+    MapStyleService.cachedPrefs.routingProvider = provider;
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.ROUTING_PROVIDER, provider);
+    } catch (e) {
+      console.warn('[MapStyleService] setRoutingProvider error:', e);
+    }
+  }
+
 
   /**
    * Returns current cached preferences synchronously.

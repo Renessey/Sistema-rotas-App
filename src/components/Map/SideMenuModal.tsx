@@ -10,6 +10,19 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { radius, shadows, spacing } from '../../theme';
+import { useTheme } from '../../theme/ThemeContext';
+import {
+  Zap,
+  X,
+  FileSpreadsheet,
+  ListOrdered,
+  Plus,
+  Crosshair,
+  Layers,
+  Settings,
+  Trash2,
+  ChevronRight,
+} from 'lucide-react-native';
 
 interface SideMenuModalProps {
   visible: boolean;
@@ -41,7 +54,9 @@ export function SideMenuModal({
   onClearRoutePress,
   totalDeliveriesCount,
 }: SideMenuModalProps) {
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const styles = React.useMemo(() => createStyles(colors), [colors]);
   const slideAnim = React.useRef(new Animated.Value(-DRAWER_WIDTH)).current;
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
 
@@ -104,16 +119,16 @@ export function SideMenuModal({
           <View style={styles.header}>
             <View style={styles.brandRow}>
               <View style={styles.logoBadge}>
-                <Text style={styles.logoIcon}>⚡</Text>
+                <Zap size={20} color="#FFFFFF" />
               </View>
               <View style={styles.brandTextWrap}>
                 <Text style={styles.brandTitle}>RotaSimples</Text>
-                <Text style={styles.brandSub}>100% Offline · Valhalla Local</Text>
+                <Text style={styles.brandSub}>Mapbox Directions API v5</Text>
               </View>
             </View>
 
             <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <X size={16} color={colors.textSecondary} />
             </Pressable>
           </View>
 
@@ -135,14 +150,14 @@ export function SideMenuModal({
                 onImportPress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#EFF6FF' }]}>
-                <Text style={styles.itemIcon}>📄</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.primaryGhost }]}>
+                <FileSpreadsheet size={18} color={colors.primary} />
               </View>
               <View style={styles.itemTextWrap}>
                 <Text style={styles.itemTitle}>Importar Planilha</Text>
                 <Text style={styles.itemSub}>Excel (.xlsx) ou CSV offline</Text>
               </View>
-              <Text style={styles.itemChevron}>›</Text>
+              <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
 
             {/* Minhas Listas */}
@@ -154,14 +169,14 @@ export function SideMenuModal({
                   onListsPress();
                 }}
               >
-                <View style={[styles.itemIconWrap, { backgroundColor: '#EDE9FE' }]}>
-                  <Text style={styles.itemIcon}>📋</Text>
+                <View style={[styles.itemIconWrap, { backgroundColor: colors.primaryGhost }]}>
+                  <ListOrdered size={18} color={colors.primary} />
                 </View>
                 <View style={styles.itemTextWrap}>
                   <Text style={styles.itemTitle}>Minhas Listas de Entregas</Text>
                   <Text style={styles.itemSub}>Lista 1, Lista 2, trocar ou apagar</Text>
                 </View>
-                <Text style={styles.itemChevron}>›</Text>
+                <ChevronRight size={18} color={colors.textDisabled} />
               </Pressable>
             )}
 
@@ -173,14 +188,14 @@ export function SideMenuModal({
                 onAddStopPress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#F0FDF4' }]}>
-                <Text style={styles.itemIcon}>➕</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.successGhost }]}>
+                <Plus size={18} color={colors.success} />
               </View>
               <View style={styles.itemTextWrap}>
                 <Text style={styles.itemTitle}>Adicionar Parada</Text>
                 <Text style={styles.itemSub}>Cadastrar com coordenadas</Text>
               </View>
-              <Text style={styles.itemChevron}>›</Text>
+              <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
 
             {/* Enquadrar Rota */}
@@ -191,14 +206,14 @@ export function SideMenuModal({
                 onFitRoutePress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#FEF3C7' }]}>
-                <Text style={styles.itemIcon}>🎯</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.warningGhost }]}>
+                <Crosshair size={18} color={colors.warning} />
               </View>
               <View style={styles.itemTextWrap}>
                 <Text style={styles.itemTitle}>Enquadrar Rota</Text>
                 <Text style={styles.itemSub}>Ver todas as paradas no mapa</Text>
               </View>
-              <Text style={styles.itemChevron}>›</Text>
+              <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
 
             {/* Camadas do Mapa */}
@@ -209,35 +224,17 @@ export function SideMenuModal({
                 onLayersPress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#F3E8FF' }]}>
-                <Text style={styles.itemIcon}>🗺️</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.primaryGhost }]}>
+                <Layers size={18} color={colors.primary} />
               </View>
               <View style={styles.itemTextWrap}>
                 <Text style={styles.itemTitle}>Camadas do Mapa</Text>
                 <Text style={styles.itemSub}>Estilos, satélite e veículo</Text>
               </View>
-              <Text style={styles.itemChevron}>›</Text>
+              <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
 
-            {/* Diagnóstico do Sistema */}
-            {onDiagnosticPress && (
-              <Pressable
-                style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-                onPress={() => {
-                  onClose();
-                  onDiagnosticPress();
-                }}
-              >
-                <View style={[styles.itemIconWrap, { backgroundColor: '#ECFDF5' }]}>
-                  <Text style={styles.itemIcon}>🩺</Text>
-                </View>
-                <View style={styles.itemTextWrap}>
-                  <Text style={styles.itemTitle}>Diagnóstico do Sistema</Text>
-                  <Text style={styles.itemSub}>GPS, SQLite, Valhalla e Mapa</Text>
-                </View>
-                <Text style={styles.itemChevron}>›</Text>
-              </Pressable>
-            )}
+            {/* Diagnóstico do Sistema — movido para a tela de Configurações (Task 4) */}
 
             {/* Ajustes */}
             <Pressable
@@ -247,14 +244,14 @@ export function SideMenuModal({
                 onSettingsPress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#F1F5F9' }]}>
-                <Text style={styles.itemIcon}>⚙️</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.surfaceElevated }]}>
+                <Settings size={18} color={colors.textSecondary} />
               </View>
               <View style={styles.itemTextWrap}>
                 <Text style={styles.itemTitle}>Configurações</Text>
                 <Text style={styles.itemSub}>Preferências e dados</Text>
               </View>
-              <Text style={styles.itemChevron}>›</Text>
+              <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
 
             <View style={styles.divider} />
@@ -271,21 +268,21 @@ export function SideMenuModal({
                 onClearRoutePress();
               }}
             >
-              <View style={[styles.itemIconWrap, { backgroundColor: '#FEE2E2' }]}>
-                <Text style={styles.itemIcon}>🗑️</Text>
+              <View style={[styles.itemIconWrap, { backgroundColor: colors.dangerGhost }]}>
+                <Trash2 size={18} color={colors.danger} />
               </View>
               <View style={styles.itemTextWrap}>
-                <Text style={[styles.itemTitle, { color: '#DC2626' }]}>Limpar Rota Atual</Text>
+                <Text style={[styles.itemTitle, { color: colors.danger }]}>Limpar Rota Atual</Text>
                 <Text style={styles.itemSub}>Apagar paradas carregadas</Text>
               </View>
-              <Text style={[styles.itemChevron, { color: '#DC2626' }]}>›</Text>
+              <ChevronRight size={18} color={colors.danger} />
             </Pressable>
           </View>
 
           {/* Footer */}
           <View style={styles.footer}>
-            <Text style={styles.footerBrand}>RotaSimples 100% Offline</Text>
-            <Text style={styles.footerSub}>Maricá · Niterói · São Gonçalo</Text>
+            <Text style={styles.footerBrand}>RotaSimples</Text>
+            <Text style={styles.footerSub}>Gestão e Roteamento Inteligente</Text>
           </View>
         </Animated.View>
       </View>
@@ -293,168 +290,155 @@ export function SideMenuModal({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-  },
-  drawer: {
-    backgroundColor: '#FFFFFF',
-    height: '100%',
-    paddingHorizontal: spacing.lg,
-    borderTopRightRadius: radius.xl,
-    borderBottomRightRadius: radius.xl,
-    ...shadows.xl,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingBottom: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm + 2,
-  },
-  logoBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.md,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoIcon: {
-    fontSize: 20,
-    color: '#FFFFFF',
-  },
-  brandTextWrap: {
-    gap: 1,
-  },
-  brandTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#0F172A',
-    letterSpacing: -0.3,
-  },
-  brandSub: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#64748B',
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  closeBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#64748B',
-  },
-  statsBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F8FAFC',
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 3,
-    marginVertical: spacing.md,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  statsLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  statsCountBadge: {
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radius.full,
-  },
-  statsCountText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  menuList: {
-    flex: 1,
-    gap: spacing.xs + 2,
-  },
-  menuItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    borderRadius: radius.lg,
-    gap: spacing.sm + 2,
-  },
-  menuItemPressed: {
-    backgroundColor: '#F8FAFC',
-  },
-  menuItemDanger: {
-    marginTop: spacing.xs,
-  },
-  itemIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  itemIcon: {
-    fontSize: 18,
-  },
-  itemTextWrap: {
-    flex: 1,
-    gap: 1,
-  },
-  itemTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1E293B',
-  },
-  itemSub: {
-    fontSize: 11,
-    color: '#64748B',
-  },
-  itemChevron: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#94A3B8',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#F1F5F9',
-    marginVertical: spacing.xs,
-  },
-  footer: {
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
-    alignItems: 'center',
-    gap: 2,
-  },
-  footerBrand: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  footerSub: {
-    fontSize: 10,
-    color: '#94A3B8',
-  },
-});
+const createStyles = (colors: any) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      flexDirection: 'row',
+    },
+    backdrop: {
+      ...StyleSheet.absoluteFill,
+      backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    },
+    drawer: {
+      backgroundColor: colors.surface,
+      height: '100%',
+      paddingHorizontal: spacing.lg,
+      borderTopRightRadius: radius.xl,
+      borderBottomRightRadius: radius.xl,
+      ...shadows.xl,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingBottom: spacing.md,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    brandRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm + 2,
+    },
+    logoBadge: {
+      width: 38,
+      height: 38,
+      borderRadius: radius.md,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    brandTextWrap: {
+      gap: 1,
+    },
+    brandTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: colors.text,
+      letterSpacing: -0.3,
+    },
+    brandSub: {
+      fontSize: 11,
+      fontWeight: '500',
+      color: colors.textMuted,
+    },
+    closeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    statsBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs + 3,
+      marginVertical: spacing.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    statsLabel: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    statsCountBadge: {
+      backgroundColor: colors.primary,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+    },
+    statsCountText: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+    menuList: {
+      flex: 1,
+      gap: spacing.xs + 2,
+    },
+    menuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.lg,
+      gap: spacing.sm + 2,
+    },
+    menuItemPressed: {
+      backgroundColor: colors.surfaceElevated,
+    },
+    menuItemDanger: {
+      marginTop: spacing.xs,
+    },
+    itemIconWrap: {
+      width: 38,
+      height: 38,
+      borderRadius: radius.md,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    itemTextWrap: {
+      flex: 1,
+      gap: 1,
+    },
+    itemTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    itemSub: {
+      fontSize: 11,
+      color: colors.textMuted,
+    },
+    divider: {
+      height: 1,
+      backgroundColor: colors.border,
+      marginVertical: spacing.xs,
+    },
+    footer: {
+      paddingTop: spacing.md,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      alignItems: 'center',
+      gap: 2,
+    },
+    footerBrand: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: colors.textSecondary,
+    },
+    footerSub: {
+      fontSize: 10,
+      color: colors.textDisabled,
+    },
+  });
+

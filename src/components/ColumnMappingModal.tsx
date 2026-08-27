@@ -12,6 +12,17 @@ import type { ColumnMappingConfig } from '../types/geo';
 import { detectStandardColumns } from '../utils/coordinateParser';
 import { spacing, radius, shadows } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
+import {
+  Package,
+  Globe,
+  Building2,
+  Mail,
+  Phone,
+  ArrowLeft,
+  ArrowRight,
+  Rocket,
+  FastForward,
+} from 'lucide-react-native';
 
 export interface ColumnMappingModalProps {
   visible: boolean;
@@ -32,7 +43,7 @@ interface StepConfig {
   title: string;
   isOptional: boolean;
   question: string;
-  icon: string;
+  Icon: React.ComponentType<{ size: number; color: string }>;
   badgeLabel: string;
 }
 
@@ -42,7 +53,7 @@ const STEPS: StepConfig[] = [
     title: 'Destino / Cliente',
     isOptional: false,
     question: 'Qual coluna contém o destino/nome da entrega?',
-    icon: '📦',
+    Icon: Package,
     badgeLabel: 'Obrigatório',
   },
   {
@@ -50,7 +61,7 @@ const STEPS: StepConfig[] = [
     title: 'Latitude e Longitude',
     isOptional: false,
     question: 'Selecione as colunas com Latitude e Longitude exatas:',
-    icon: '🌐',
+    Icon: Globe,
     badgeLabel: 'Crítico / GPS',
   },
   {
@@ -58,7 +69,7 @@ const STEPS: StepConfig[] = [
     title: 'Bairro e Cidade',
     isOptional: true,
     question: 'Quais colunas representam Bairro e Cidade?',
-    icon: '🏙️',
+    Icon: Building2,
     badgeLabel: 'Opcional',
   },
   {
@@ -66,7 +77,7 @@ const STEPS: StepConfig[] = [
     title: 'CEP / Código Postal',
     isOptional: true,
     question: 'Qual coluna contém o CEP ou Postal Code?',
-    icon: '📮',
+    Icon: Mail,
     badgeLabel: 'Informativo',
   },
   {
@@ -74,7 +85,7 @@ const STEPS: StepConfig[] = [
     title: 'Pedido e Telefone',
     isOptional: true,
     question: 'Selecione as colunas de Pedido e Telefone/WhatsApp:',
-    icon: '📞',
+    Icon: Phone,
     badgeLabel: 'Opcional',
   },
 ];
@@ -88,8 +99,8 @@ export default function ColumnMappingModal({
   onClose,
   onConfirm,
 }: ColumnMappingModalProps) {
-  const { colors: themeColors } = useTheme();
-  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
@@ -122,6 +133,7 @@ export default function ColumnMappingModal({
   }, [headers, firstRow, visible]);
 
   const currentStep = STEPS[currentStepIndex] || STEPS[0];
+  const StepIcon = currentStep.Icon;
   const progressPct = ((currentStepIndex + 1) / STEPS.length) * 100;
 
   const handleSelectColumnForStep = (header: string) => {
@@ -324,7 +336,7 @@ export default function ColumnMappingModal({
                       isSelected && styles.iconCircleSelected,
                     ]}
                   >
-                    <Text style={styles.cardIconText}>{currentStep.icon}</Text>
+                    <StepIcon size={18} color={isSelected ? colors.primary : colors.textMuted} />
                   </View>
 
                   <View style={styles.cardInfo}>
@@ -365,7 +377,8 @@ export default function ColumnMappingModal({
               ]}
               onPress={handleBack}
             >
-              <Text style={styles.backBtnText}>← Voltar</Text>
+              <ArrowLeft size={16} color={colors.textSecondary} />
+              <Text style={styles.backBtnText}>Voltar</Text>
             </Pressable>
 
             {currentStep.isOptional && !hasSelectionInCurrentStep ? (
@@ -377,7 +390,8 @@ export default function ColumnMappingModal({
                 ]}
                 onPress={handleSkip}
               >
-                <Text style={styles.skipBtnText}>⏭ Pular</Text>
+                <FastForward size={16} color="#FFFFFF" />
+                <Text style={styles.skipBtnText}>Pular</Text>
               </Pressable>
             ) : (
               <Pressable
@@ -391,11 +405,17 @@ export default function ColumnMappingModal({
                 disabled={!hasSelectionInCurrentStep && !currentStep.isOptional}
                 onPress={handleNext}
               >
-                <Text style={styles.primaryBtnText}>
-                  {currentStepIndex === STEPS.length - 1
-                    ? '🚀 Validar e Importar'
-                    : 'Avançar →'}
-                </Text>
+                {currentStepIndex === STEPS.length - 1 ? (
+                  <>
+                    <Rocket size={16} color="#FFFFFF" />
+                    <Text style={styles.primaryBtnText}>Validar e Importar</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.primaryBtnText}>Avançar</Text>
+                    <ArrowRight size={16} color="#FFFFFF" />
+                  </>
+                )}
               </Pressable>
             )}
           </View>
@@ -405,7 +425,7 @@ export default function ColumnMappingModal({
   );
 }
 
-const createStyles = (themeColors: any) =>
+const createStyles = (colors: any) =>
   StyleSheet.create({
     overlay: {
       flex: 1,
@@ -416,7 +436,7 @@ const createStyles = (themeColors: any) =>
       ...StyleSheet.absoluteFill,
     },
     sheet: {
-      backgroundColor: themeColors.surface,
+      backgroundColor: colors.surface,
       borderTopLeftRadius: radius.xxl,
       borderTopRightRadius: radius.xxl,
       maxHeight: SCREEN_HEIGHT * 0.9,
@@ -424,7 +444,7 @@ const createStyles = (themeColors: any) =>
       paddingTop: spacing.xs + 2,
       paddingBottom: spacing.lg,
       borderWidth: 1,
-      borderColor: themeColors.border,
+      borderColor: colors.border,
       borderBottomWidth: 0,
       ...shadows.xl,
     },
@@ -432,7 +452,7 @@ const createStyles = (themeColors: any) =>
       alignSelf: 'center',
       width: 44,
       height: 5,
-      backgroundColor: '#CBD5E1',
+      backgroundColor: colors.borderStrong,
       borderRadius: radius.full,
       marginTop: spacing.xs,
       marginBottom: spacing.sm,
@@ -450,14 +470,14 @@ const createStyles = (themeColors: any) =>
     titleText: {
       fontSize: 22,
       fontWeight: '800',
-      color: themeColors.text,
+      color: colors.text,
       letterSpacing: -0.3,
     },
     badgeText: {
       fontSize: 13,
       fontWeight: '700',
-      color: '#2563EB',
-      backgroundColor: '#EFF6FF',
+      color: colors.primary,
+      backgroundColor: colors.primaryGhost,
       paddingHorizontal: 8,
       paddingVertical: 2,
       borderRadius: radius.full,
@@ -465,34 +485,34 @@ const createStyles = (themeColors: any) =>
     questionText: {
       fontSize: 15,
       fontWeight: '500',
-      color: themeColors.textSecondary,
+      color: colors.textSecondary,
       marginBottom: spacing.md,
       lineHeight: 21,
     },
     progressTrack: {
       height: 4,
-      backgroundColor: '#E2E8F0',
+      backgroundColor: colors.border,
       borderRadius: radius.full,
       overflow: 'hidden',
       marginTop: 2,
     },
     progressFill: {
       height: '100%',
-      backgroundColor: '#2563EB',
+      backgroundColor: colors.primary,
       borderRadius: radius.full,
     },
     sectionHeader: {
-      backgroundColor: '#F8FAFC',
+      backgroundColor: colors.surfaceElevated,
       paddingHorizontal: spacing.lg,
       paddingVertical: spacing.xs + 3,
       borderTopWidth: 1,
       borderBottomWidth: 1,
-      borderColor: '#E2E8F0',
+      borderColor: colors.border,
     },
     sectionTitle: {
       fontSize: 12,
       fontWeight: '700',
-      color: '#64748B',
+      color: colors.textMuted,
       letterSpacing: 0.8,
     },
     scroll: {
@@ -506,18 +526,18 @@ const createStyles = (themeColors: any) =>
     columnCard: {
       flexDirection: 'row',
       alignItems: 'center',
-      backgroundColor: '#FFFFFF',
+      backgroundColor: colors.surface,
       borderRadius: radius.lg,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.md - 1,
       borderWidth: 1.5,
-      borderColor: '#E2E8F0',
+      borderColor: colors.border,
       gap: spacing.md,
       ...shadows.sm,
     },
     columnCardSelected: {
-      borderColor: '#2563EB',
-      backgroundColor: '#F8FAFC',
+      borderColor: colors.primary,
+      backgroundColor: colors.surfaceElevated,
       ...shadows.md,
     },
     columnCardPressed: {
@@ -528,15 +548,12 @@ const createStyles = (themeColors: any) =>
       width: 40,
       height: 40,
       borderRadius: 20,
-      backgroundColor: '#F1F5F9',
+      backgroundColor: colors.surfaceElevated,
       alignItems: 'center',
       justifyContent: 'center',
     },
     iconCircleSelected: {
-      backgroundColor: '#EFF6FF',
-    },
-    cardIconText: {
-      fontSize: 18,
+      backgroundColor: colors.primaryGhost,
     },
     cardInfo: {
       flex: 1,
@@ -550,13 +567,13 @@ const createStyles = (themeColors: any) =>
     colNameText: {
       fontSize: 16,
       fontWeight: '700',
-      color: '#1E293B',
+      color: colors.text,
     },
     colNameTextSelected: {
-      color: '#2563EB',
+      color: colors.primary,
     },
     tagBadge: {
-      backgroundColor: '#2563EB',
+      backgroundColor: colors.primary,
       paddingHorizontal: 8,
       paddingVertical: 2,
       borderRadius: radius.full,
@@ -569,7 +586,7 @@ const createStyles = (themeColors: any) =>
     sampleValueText: {
       fontSize: 13,
       fontWeight: '400',
-      color: '#64748B',
+      color: colors.textMuted,
     },
     footer: {
       flexDirection: 'row',
@@ -577,32 +594,36 @@ const createStyles = (themeColors: any) =>
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
       borderTopWidth: 1,
-      borderTopColor: '#E2E8F0',
-      backgroundColor: themeColors.surface,
+      borderTopColor: colors.border,
+      backgroundColor: colors.surface,
     },
     backBtn: {
       flex: 1,
-      backgroundColor: '#F1F5F9',
+      flexDirection: 'row',
+      gap: 6,
+      backgroundColor: colors.surfaceElevated,
       borderRadius: radius.lg,
       paddingVertical: spacing.md,
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: '#E2E8F0',
+      borderColor: colors.border,
     },
     backBtnText: {
       fontSize: 15,
       fontWeight: '700',
-      color: '#334155',
+      color: colors.textSecondary,
     },
     primaryBtn: {
       flex: 1.6,
-      backgroundColor: '#2563EB',
+      flexDirection: 'row',
+      gap: 6,
+      backgroundColor: colors.primary,
       borderRadius: radius.lg,
       paddingVertical: spacing.md,
       alignItems: 'center',
       justifyContent: 'center',
-      ...shadows.colored('#2563EB'),
+      ...shadows.colored(colors.primary),
     },
     primaryBtnDisabled: {
       opacity: 0.45,
@@ -613,7 +634,7 @@ const createStyles = (themeColors: any) =>
       color: '#FFFFFF',
     },
     skipBtn: {
-      backgroundColor: '#2563EB',
+      backgroundColor: colors.primary,
     },
     skipBtnText: {
       fontSize: 15,

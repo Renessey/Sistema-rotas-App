@@ -7,7 +7,7 @@ import SettingsScreen from '../screens/Settings/SettingsScreen';
 import HomeScreen from '../screens/Home/HomeScreen';
 import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
 import DiagnosticScreen from '../screens/Deliveries/DiagnosticScreen';
-import { colors } from '../theme';
+import { useTheme } from '../theme/ThemeContext';
 
 export type RootStackParamList = {
   Map: undefined;
@@ -21,6 +21,8 @@ export type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function Navigation() {
+  const { colors, theme } = useTheme();
+
   return (
     <NavigationContainer>
       <Stack.Navigator
@@ -38,6 +40,7 @@ export function Navigation() {
           animation: 'slide_from_right',
         }}
       >
+
         <Stack.Screen
           name="Map"
           component={MapScreen}

@@ -13,6 +13,16 @@ import type { DeliveryListEntity } from '../../types/geo';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
+import {
+  X,
+  FolderOpen,
+  ListOrdered,
+  Check,
+  Map,
+  Pencil,
+  Trash2,
+  Calendar,
+} from 'lucide-react-native';
 
 interface DeliveryListsModalProps {
   visible: boolean;
@@ -111,7 +121,7 @@ export function DeliveryListsModal({
             </View>
 
             <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <X size={16} color={colors.textSecondary} />
             </Pressable>
           </View>
 
@@ -123,7 +133,7 @@ export function DeliveryListsModal({
           >
             {lists.length === 0 ? (
               <View style={styles.emptyBox}>
-                <Text style={styles.emptyIcon}>📂</Text>
+                <FolderOpen size={48} color={colors.textDisabled} />
                 <Text style={styles.emptyTitle}>Nenhuma lista salva</Text>
                 <Text style={styles.emptySub}>
                   Importe uma planilha (.xlsx ou .csv) para criar a sua primeira lista de entregas.
@@ -167,12 +177,12 @@ export function DeliveryListsModal({
                               style={styles.saveRenameBtn}
                               onPress={() => handleSaveRename(list.id)}
                             >
-                              <Text style={styles.saveRenameBtnText}>✓</Text>
+                              <Check size={14} color="#FFFFFF" />
                             </Pressable>
                           </View>
                         ) : (
                           <View style={styles.titleWithIcon}>
-                            <Text style={styles.listIcon}>📋</Text>
+                            <ListOrdered size={18} color={colors.primary} />
                             <Text
                               style={[
                                 styles.listName,
@@ -194,10 +204,13 @@ export function DeliveryListsModal({
                     </View>
 
                     {/* Meta info: Date & file */}
-                    <Text style={styles.dateText}>
-                      📅 Criada em {formattedDate}
-                      {list.fileName ? ` · ${list.fileName}` : ''}
-                    </Text>
+                    <View style={styles.dateRow}>
+                      <Calendar size={12} color={colors.textMuted} />
+                      <Text style={styles.dateText}>
+                        Criada em {formattedDate}
+                        {list.fileName ? ` · ${list.fileName}` : ''}
+                      </Text>
+                    </View>
 
                     {/* Stats pills */}
                     <View style={styles.statsRow}>
@@ -231,11 +244,13 @@ export function DeliveryListsModal({
                           ]}
                           onPress={() => handleSelectList(list)}
                         >
-                          <Text style={styles.selectBtnText}>🗺️ Carregar no Mapa</Text>
+                          <Map size={14} color={colors.primary} />
+                          <Text style={styles.selectBtnText}>Carregar no Mapa</Text>
                         </Pressable>
                       ) : (
                         <View style={styles.loadedNotice}>
-                          <Text style={styles.loadedNoticeText}>✓ Em exibição</Text>
+                          <Check size={14} color={colors.success} />
+                          <Text style={styles.loadedNoticeText}>Em exibição</Text>
                         </View>
                       )}
 
@@ -247,7 +262,7 @@ export function DeliveryListsModal({
                         onPress={() => handleStartRename(list)}
                         hitSlop={6}
                       >
-                        <Text style={styles.actionIcon}>✏️</Text>
+                        <Pencil size={15} color={colors.textSecondary} />
                       </Pressable>
 
                       <Pressable
@@ -259,7 +274,7 @@ export function DeliveryListsModal({
                         onPress={() => handleDeleteList(list)}
                         hitSlop={6}
                       >
-                        <Text style={styles.deleteIcon}>🗑️</Text>
+                        <Trash2 size={15} color={colors.danger} />
                       </Pressable>
                     </View>
                   </View>
@@ -272,6 +287,7 @@ export function DeliveryListsModal({
     </Modal>
   );
 }
+
 
 const createStyles = (colors: any) =>
   StyleSheet.create({
@@ -424,6 +440,11 @@ const createStyles = (colors: any) =>
       fontWeight: '900',
       letterSpacing: 0.5,
     },
+    dateRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+    },
     dateText: {
       fontSize: 12,
       color: colors.textMuted,
@@ -432,6 +453,7 @@ const createStyles = (colors: any) =>
       flexDirection: 'row',
       gap: spacing.xs + 2,
       marginTop: 2,
+
     },
     statPill: {
       flexDirection: 'row',

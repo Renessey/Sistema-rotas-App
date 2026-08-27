@@ -8,6 +8,12 @@ jest.mock('react-native-fs', () => ({
   readFile: jest.fn(),
 }));
 
+jest.mock('@op-engineering/op-sqlite', () => ({
+  open: jest.fn(() => ({
+    executeSync: jest.fn(() => ({ rows: [] })),
+  })),
+}));
+
 import { guessMapping, buildAddressQuery } from '../src/utils/columnMappingHeuristics';
 import { ImportService } from '../src/services/import/ImportService';
 
