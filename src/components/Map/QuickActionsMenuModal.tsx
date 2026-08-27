@@ -12,10 +12,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { radius, shadows, spacing, typography } from '../../theme';
 import {
   RotateCcw,
-  MessageCircle,
   Share2,
-  Flag,
-  Car,
   X,
 } from 'lucide-react-native';
 
@@ -23,20 +20,14 @@ export interface QuickActionsMenuModalProps {
   visible: boolean;
   onClose: () => void;
   onReoptimize: () => void;
-  onLasso: () => void;
   onShareRoute?: () => void;
-  onSetStartEnd?: () => void;
-  onOrganizeCargo?: () => void;
 }
 
 export function QuickActionsMenuModal({
   visible,
   onClose,
   onReoptimize,
-  onLasso,
   onShareRoute,
-  onSetStartEnd,
-  onOrganizeCargo,
 }: QuickActionsMenuModalProps) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -71,16 +62,6 @@ export function QuickActionsMenuModal({
       },
     },
     {
-      id: 'lasso',
-      title: 'ROTEIRIZAÇÃO POR LAÇO',
-      icon: MessageCircle,
-      iconColor: '#F97316',
-      onPress: () => {
-        onClose();
-        onLasso();
-      },
-    },
-    {
       id: 'share',
       title: 'COMPARTILHAR ROTA',
       icon: Share2,
@@ -88,26 +69,6 @@ export function QuickActionsMenuModal({
       onPress: () => {
         onClose();
         onShareRoute?.();
-      },
-    },
-    {
-      id: 'start_end',
-      title: 'DEFINIR INÍCIO/FIM',
-      icon: Flag,
-      iconColor: '#6366F1',
-      onPress: () => {
-        onClose();
-        onSetStartEnd?.();
-      },
-    },
-    {
-      id: 'cargo',
-      title: 'ORGANIZAR CARGA',
-      icon: Car,
-      iconColor: '#38BDF8',
-      onPress: () => {
-        onClose();
-        onOrganizeCargo?.();
       },
     },
   ];

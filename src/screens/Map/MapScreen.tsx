@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import {
   Map as MapLibreMap,
+  MapRef,
   Camera,
   CameraRef,
   GeoJSONSource,
@@ -77,6 +78,8 @@ import {
   Info,
   RotateCcw,
   Settings as SettingsIcon,
+  PenTool,
+  Hand,
 } from 'lucide-react-native';
 
 /** Point-in-polygon usando ray-casting */
@@ -299,10 +302,15 @@ export default function MapScreen({ navigation }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Multi-Lasso Tool (Screenshot 2)
+  const mapRef = useRef<MapRef | null>(null);
   const [lassoMode, setLassoMode] = useState(false);
+  const [lassoSubMode, setLassoSubMode] = useState<'draw' | 'pan'>('draw');
+  const [geoLassoLoops, setGeoLassoLoops] = useState<Array<Array<LngLat>>>([]);
   const [lassoLoops, setLassoLoops] = useState<Array<Array<[number, number]>>>([]);
   const [currentLassoStroke, setCurrentLassoStroke] = useState<Array<[number, number]>>([]);
   const [lassoSelectedStopKeys, setLassoSelectedStopKeys] = useState<Set<string>>(new Set());
+  const activeStrokeRef = useRef<Array<[number, number]>>([]);
+  const lastPointRef = useRef<[number, number] | null>(null);
   const mapContainerRef = useRef<View | null>(null);
   const mapLayoutRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
 
@@ -702,86 +710,198 @@ export default function MapScreen({ navigation }: Props) {
   // O useEffect de auto-otimização foi intencionalmente removido.
   // A rota deve ser otimizada apenas quando o usuário pressionar 'Otimizar Rota'.
 
-  /* ─── Task 2: Multi-Lasso Tool (Screenshot 2) ─── */
-  const computeEnclosedStops = useCallback(
-    (loops: Array<Array<[number, number]>>) => {
-      if (loops.length === 0 || locatedDeliveries.length === 0) {
+  /* ─── Task 2: Multi-Lasso Tool com Fixação Geográfica no Mapa ─── */
+  const computeEnclosedStopsFromGeo = useCallback(
+    (geoLoops: Array<Array<LngLat>>) => {
+      if (geoLoops.length === 0 || routeStops.length === 0) {
         setLassoSelectedStopKeys(new Set());
         return;
       }
-      const coords: LngLat[] = locatedDeliveries.map((d) => [d.longitude!, d.latitude!]);
-      const [w, s, e, n] = boundingBox(coords);
-      const spanLng = Math.max(e - w, 0.001);
-      const spanLat = Math.max(n - s, 0.001);
-      const screenW = Dimensions.get('window').width;
-      const screenH = Dimensions.get('window').height;
-
       const enclosedKeys = new Set<string>();
 
       routeStops.forEach((stop) => {
-        const normX = (stop.longitude - w) / spanLng;
-        const normY = (n - stop.latitude) / spanLat;
-        const ptX = 45 + normX * (screenW - 90);
-        const ptY = 110 + normY * (screenH - 360);
-
-        for (const loop of loops) {
-          if (loop.length >= 3) {
-            if (pointInPolygon([ptX, ptY], loop)) {
-              enclosedKeys.add(stop.key);
-              break;
-            }
-            // Tolerância por proximidade aos vértices do laço
-            let near = false;
-            for (const [vx, vy] of loop) {
-              if (Math.hypot(ptX - vx, ptY - vy) < 36) {
-                near = true;
-                break;
-              }
-            }
-            if (near) {
-              enclosedKeys.add(stop.key);
-              break;
-            }
+        const stopCoord: [number, number] = [stop.longitude, stop.latitude];
+        for (const loop of geoLoops) {
+          if (loop.length >= 3 && pointInPolygon(stopCoord, loop)) {
+            enclosedKeys.add(stop.key);
+            break;
           }
         }
       });
 
-      // Se nenhum ponto foi capturado estritamente por projeção, seleciona todas as paradas visíveis no laço
-      if (enclosedKeys.size === 0 && loops.length > 0) {
-        routeStops.slice(0, Math.min(routeStops.length, 12)).forEach((st) => enclosedKeys.add(st.key));
-      }
-
       setLassoSelectedStopKeys(enclosedKeys);
     },
-    [locatedDeliveries, routeStops],
+    [routeStops],
   );
 
-  const handleConfirmLasso = useCallback(() => {
-    const selected = routeStops.filter((s) => lassoSelectedStopKeys.has(s.key));
-    setLassoMode(false);
-    setLassoLoops([]);
-    setCurrentLassoStroke([]);
-    setLassoSelectedStopKeys(new Set());
-
-    if (selected.length > 0) {
-      setRouteNeedsOptimization(true);
-      optimizeRoute(currentLocation || undefined);
+  const handleConfirmLasso = useCallback(async () => {
+    if (geoLassoLoops.length === 0 && lassoLoops.length === 0) {
+      handleCancelLasso();
+      return;
     }
-  }, [routeStops, lassoSelectedStopKeys, optimizeRoute, currentLocation]);
+
+    setOptimizing(true);
+
+    try {
+      // 1. Obtém posição GPS real de partida
+      let userCoords = currentLocation;
+      if (!userCoords) {
+        try {
+          const freshPos = await LocationService.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 0,
+          });
+          userCoords = [freshPos.longitude, freshPos.latitude];
+          setCurrentLocation(userCoords);
+          setHasGpsFix(true);
+        } catch {
+          userCoords = currentLocation;
+        }
+      }
+
+      if (!userCoords) {
+        Alert.alert('GPS Indisponível', 'Ative o GPS para otimizar as rotas pelas áreas selecionadas.');
+        setOptimizing(false);
+        return;
+      }
+
+      // 2. Agrupa as paradas pendentes em clusters na sequência das áreas desenhadas (1, 2, 3...)
+      const addedKeys = new Set<string>();
+      const clusters: RouteStop[][] = [];
+
+      geoLassoLoops.forEach((loop) => {
+        const stopsInThisLoop: RouteStop[] = [];
+        routeStops.forEach((stop) => {
+          if (stop.status === 'completed') return;
+          if (addedKeys.has(stop.key)) return;
+          const stopCoord: [number, number] = [stop.longitude, stop.latitude];
+          if (pointInPolygon(stopCoord, loop)) {
+            stopsInThisLoop.push(stop);
+            addedKeys.add(stop.key);
+          }
+        });
+        if (stopsInThisLoop.length > 0) {
+          clusters.push(stopsInThisLoop);
+        }
+      });
+
+      // Paradas restantes não incluídas em nenhum laço (ficam para o final)
+      const unassignedStops: RouteStop[] = [];
+      routeStops.forEach((stop) => {
+        if (stop.status === 'completed') return;
+        if (!addedKeys.has(stop.key)) {
+          unassignedStops.push(stop);
+        }
+      });
+      if (unassignedStops.length > 0) {
+        clusters.push(unassignedStops);
+      }
+
+      // 3. Otimiza cada área/cluster encadeadamente
+      // Área 1 parte do GPS do motorista.
+      // As próximas áreas partem da última parada da área anterior.
+      const finalOrderedStops: RouteStop[] = [];
+      let currentStartPoint: LngLat = userCoords;
+
+      for (const cluster of clusters) {
+        if (cluster.length === 1) {
+          finalOrderedStops.push(cluster[0]);
+          currentStartPoint = [cluster[0].longitude, cluster[0].latitude];
+        } else if (cluster.length > 1) {
+          const clusterCoords: LngLat[] = cluster.map((s) => [s.longitude, s.latitude]);
+          try {
+            const clusterOpt = await RouteOptimizationService.optimize(
+              currentStartPoint,
+              clusterCoords,
+              { useDuration: true },
+            );
+            clusterOpt.order.forEach((idx) => {
+              finalOrderedStops.push(cluster[idx]);
+            });
+            const lastStop = cluster[clusterOpt.order[clusterOpt.order.length - 1]];
+            currentStartPoint = [lastStop.longitude, lastStop.latitude];
+          } catch (optErr) {
+            console.warn('[Lasso] Cluster optimization fallback to linear order:', optErr);
+            cluster.forEach((s) => finalOrderedStops.push(s));
+            const lastStop = cluster[cluster.length - 1];
+            currentStartPoint = [lastStop.longitude, lastStop.latitude];
+          }
+        }
+      }
+
+      // 4. Grava a nova sequência de prioridade no banco local SQLite
+      let seqIndex = 1;
+      finalOrderedStops.forEach((st) => {
+        st.deliveries.forEach((del) => {
+          DatabaseService.updateDeliverySequence(del.id, seqIndex++);
+        });
+      });
+
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+
+      // 5. Traçado da rota pelo Mapbox Directions v5 partindo do GPS e seguindo a ordem dos laços
+      const waypoints: LngLat[] = [
+        userCoords,
+        ...finalOrderedStops.map((s) => [s.longitude, s.latitude] as LngLat),
+      ];
+
+      const result = await RoutingService.route(waypoints, {
+        costing: costingMode,
+        heading: currentHeadingRef.current,
+      });
+
+      setRoute(result.geojson);
+      setRouteInfo({ distance: result.distance, duration: result.duration });
+      setRouteNeedsOptimization(false);
+
+      // 6. Limpa o modo laço e ajusta o enquadramento no mapa
+      setLassoMode(false);
+      setLassoSubMode('draw');
+      setGeoLassoLoops([]);
+      setLassoLoops([]);
+      activeStrokeRef.current = [];
+      lastPointRef.current = null;
+      setCurrentLassoStroke([]);
+      setLassoSelectedStopKeys(new Set());
+
+      setTimeout(() => fitRoute(), 400);
+    } catch (error) {
+      console.warn('[Map] handleConfirmLasso failed:', error);
+      Alert.alert('Erro', 'Não foi possível otimizar as rotas pelas áreas selecionadas.');
+    } finally {
+      setOptimizing(false);
+    }
+  }, [
+    geoLassoLoops,
+    lassoLoops,
+    currentLocation,
+    routeStops,
+    costingMode,
+    fitRoute,
+    handleCancelLasso,
+  ]);
 
   const handleUndoLasso = useCallback(() => {
-    if (lassoLoops.length > 0) {
-      const nextLoops = lassoLoops.slice(0, -1);
-      setLassoLoops(nextLoops);
-      computeEnclosedStops(nextLoops);
+    if (geoLassoLoops.length > 0) {
+      const nextGeoLoops = geoLassoLoops.slice(0, -1);
+      setGeoLassoLoops(nextGeoLoops);
+      setLassoLoops((prev) => prev.slice(0, -1));
+      computeEnclosedStopsFromGeo(nextGeoLoops);
     } else {
       setLassoSelectedStopKeys(new Set());
     }
-  }, [lassoLoops, computeEnclosedStops]);
+  }, [geoLassoLoops, computeEnclosedStopsFromGeo]);
 
   const handleCancelLasso = useCallback(() => {
     setLassoMode(false);
+    setLassoSubMode('draw');
+    setGeoLassoLoops([]);
     setLassoLoops([]);
+    activeStrokeRef.current = [];
+    lastPointRef.current = null;
     setCurrentLassoStroke([]);
     setLassoSelectedStopKeys(new Set());
   }, []);
@@ -791,7 +911,11 @@ export default function MapScreen({ navigation }: Props) {
       handleCancelLasso();
     } else {
       setLassoMode(true);
+      setLassoSubMode('draw');
+      setGeoLassoLoops([]);
       setLassoLoops([]);
+      activeStrokeRef.current = [];
+      lastPointRef.current = null;
       setCurrentLassoStroke([]);
       setLassoSelectedStopKeys(new Set());
     }
@@ -956,33 +1080,95 @@ export default function MapScreen({ navigation }: Props) {
     });
   }, [filteredStops]);
 
-  /* ─── Task 2: Multi-Lasso PanResponder (Screenshot 2) ─── */
+  /* ─── Task 2: Multi-Lasso PanResponder (1 dedo = desenha, 2 dedos = move/zoom no mapa) ─── */
   const lassoPanResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => lassoMode,
-        onMoveShouldSetPanResponder: () => lassoMode,
+        onStartShouldSetPanResponder: (e) => {
+          if (!lassoMode) return false;
+          // 1 dedo: captura para desenhar o laço
+          // 2 dedos: não captura para permitir movimentar/fazer zoom no mapa
+          return e.nativeEvent.touches && e.nativeEvent.touches.length === 1;
+        },
+        onMoveShouldSetPanResponder: (e) => {
+          if (!lassoMode) return false;
+          return e.nativeEvent.touches && e.nativeEvent.touches.length === 1;
+        },
+        onPanResponderTerminationRequest: () => true,
+        onPanResponderTerminate: () => {
+          activeStrokeRef.current = [];
+          lastPointRef.current = null;
+          setCurrentLassoStroke([]);
+        },
         onPanResponderGrant: (e) => {
+          if (e.nativeEvent.touches && e.nativeEvent.touches.length > 1) return;
           const { locationX, locationY } = e.nativeEvent;
+          activeStrokeRef.current = [[locationX, locationY]];
+          lastPointRef.current = [locationX, locationY];
           setCurrentLassoStroke([[locationX, locationY]]);
         },
         onPanResponderMove: (e) => {
-          const { locationX, locationY } = e.nativeEvent;
-          setCurrentLassoStroke((prev) => [...prev, [locationX, locationY]]);
-        },
-        onPanResponderRelease: () => {
-          if (currentLassoStroke.length < 4) {
+          if (e.nativeEvent.touches && e.nativeEvent.touches.length > 1) {
+            // Se colocar um 2º dedo durante o traço, descarta o traço para mover o mapa
+            activeStrokeRef.current = [];
+            lastPointRef.current = null;
             setCurrentLassoStroke([]);
             return;
           }
-          const newLoop = [...currentLassoStroke, currentLassoStroke[0]];
-          const updatedLoops = [...lassoLoops, newLoop];
-          setLassoLoops(updatedLoops);
+          const { locationX, locationY } = e.nativeEvent;
+          const last = lastPointRef.current;
+          if (last) {
+            const dist = Math.hypot(locationX - last[0], locationY - last[1]);
+            if (dist < 4) return; // Evita sobrecarga de re-renderização
+          }
+          lastPointRef.current = [locationX, locationY];
+          activeStrokeRef.current.push([locationX, locationY]);
+          setCurrentLassoStroke([...activeStrokeRef.current]);
+        },
+        onPanResponderRelease: async () => {
+          const stroke = activeStrokeRef.current;
+          if (stroke.length < 4) {
+            activeStrokeRef.current = [];
+            lastPointRef.current = null;
+            setCurrentLassoStroke([]);
+            return;
+          }
+
+          // Converte os pontos da tela para coordenadas geográficas fixadas no mapa
+          const sampledStroke = stroke.filter((_, idx) => idx % 2 === 0 || idx === stroke.length - 1);
+          const geoPoints: LngLat[] = [];
+
+          if (mapRef.current) {
+            for (const pt of sampledStroke) {
+              try {
+                const lngLat = await mapRef.current.unproject(pt);
+                if (lngLat && Array.isArray(lngLat) && lngLat.length >= 2) {
+                  geoPoints.push(lngLat as LngLat);
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
+          }
+
+          if (geoPoints.length >= 3) {
+            const closedGeoLoop: LngLat[] = [...geoPoints, geoPoints[0]];
+            setGeoLassoLoops((prev) => {
+              const updated = [...prev, closedGeoLoop];
+              computeEnclosedStopsFromGeo(updated);
+              return updated;
+            });
+          }
+
+          const newScreenLoop: [number, number][] = [...stroke, stroke[0]];
+          setLassoLoops((prev) => [...prev, newScreenLoop]);
+
+          activeStrokeRef.current = [];
+          lastPointRef.current = null;
           setCurrentLassoStroke([]);
-          computeEnclosedStops(updatedLoops);
         },
       }),
-    [lassoMode, currentLassoStroke, lassoLoops, computeEnclosedStops],
+    [lassoMode, computeEnclosedStopsFromGeo],
   );
 
   const routeGeoJsonString = useMemo(() => {
@@ -992,10 +1178,28 @@ export default function MapScreen({ navigation }: Props) {
     return JSON.stringify(route);
   }, [route]);
 
+  const geoLassoGeoJsonString = useMemo(() => {
+    if (geoLassoLoops.length === 0) return null;
+    const features = geoLassoLoops.map((loop, idx) => ({
+      type: 'Feature' as const,
+      id: `lasso-loop-${idx}`,
+      properties: { index: idx + 1 },
+      geometry: {
+        type: 'Polygon' as const,
+        coordinates: [loop],
+      },
+    }));
+    return JSON.stringify({
+      type: 'FeatureCollection',
+      features,
+    });
+  }, [geoLassoLoops]);
+
   return (
     <View style={styles.container}>
       {/* ── Background Map ── */}
       <MapLibreMap
+        ref={mapRef}
         style={styles.map}
         mapStyle={currentStyleUrl}
         compass={false}
@@ -1045,6 +1249,56 @@ export default function MapScreen({ navigation }: Props) {
           </GeoJSONSource>
         )}
 
+        {/* Renderização Geográfica Fixa dos Laços no Mapa (Move e dá Zoom com o Mapa) */}
+        {geoLassoGeoJsonString && (
+          <GeoJSONSource
+            id="lasso-geo-source"
+            data={geoLassoGeoJsonString}
+          >
+            <Layer
+              id="lasso-polygon-fill"
+              type="fill"
+              source="lasso-geo-source"
+              paint={{
+                'fill-color': 'rgba(99, 102, 241, 0.22)',
+              }}
+            />
+            <Layer
+              id="lasso-polygon-stroke"
+              type="line"
+              source="lasso-geo-source"
+              paint={{
+                'line-color': '#4F46E5',
+                'line-width': 2.8,
+                'line-dasharray': [3, 2],
+              }}
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+            />
+          </GeoJSONSource>
+        )}
+
+        {/* Badges Numéricos '1', '2', '3' Ancorados Geograficamente no Mapa */}
+        {geoLassoLoops.map((loop, loopIdx) => {
+          if (loop.length < 3) return null;
+          const lngs = loop.map((p) => p[0]);
+          const lats = loop.map((p) => p[1]);
+          const avgLng = lngs.reduce((a, b) => a + b, 0) / lngs.length;
+          const maxLat = Math.max(...lats);
+
+          return (
+            <Marker
+              key={`geo-loop-badge-${loopIdx}`}
+              id={`geo-loop-badge-${loopIdx}`}
+              lngLat={[avgLng, maxLat]}
+              anchor="bottom"
+            >
+              <View style={styles.loopBadgeCircle}>
+                <Text style={styles.loopBadgeText}>{loopIdx + 1}</Text>
+              </View>
+            </Marker>
+          );
+        })}
+
         {/* Current User Marker */}
         {currentLocation && (
           <Marker id="user-location" lngLat={currentLocation} anchor="center">
@@ -1060,42 +1314,35 @@ export default function MapScreen({ navigation }: Props) {
         {deliveryMarkers}
       </MapLibreMap>
 
-      {/* Multi-Lasso Overlay — Freehand SVG Drawing & Loop Visualization (Screenshot 2) */}
+      {/* Multi-Lasso Overlay — Freehand SVG Drawing (Screenshot 2) */}
       {lassoMode && (
         <View
-          {...lassoPanResponder.panHandlers}
           style={[StyleSheet.absoluteFill, styles.lassoOverlay]}
-          pointerEvents="box-only"
+          pointerEvents="box-none"
         >
-          {/* SVG Canvas for all drawn loops + current active stroke */}
-          <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
-            {lassoLoops.map((loop, loopIdx) => {
-              const pointsStr = loop.map(([x, y]) => `${x},${y}`).join(' ');
-              return (
-                <Polygon
-                  key={`loop-${loopIdx}`}
-                  points={pointsStr}
-                  fill="rgba(99, 102, 241, 0.18)"
-                  stroke="#4F46E5"
-                  strokeWidth={2.5}
-                  strokeDasharray="6, 4"
+          {/* Active 1-Finger Drawing Canvas Layer */}
+          <View
+            {...lassoPanResponder.panHandlers}
+            style={StyleSheet.absoluteFill}
+            pointerEvents={lassoSubMode === 'draw' ? 'auto' : 'none'}
+          >
+            {/* SVG Canvas for active drawing stroke */}
+            <Svg style={StyleSheet.absoluteFill} pointerEvents="none">
+              {currentLassoStroke.length > 1 && (
+                <Polyline
+                  points={currentLassoStroke.map(([x, y]) => `${x},${y}`).join(' ')}
+                  fill="none"
+                  stroke="#818CF8"
+                  strokeWidth={3}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
-              );
-            })}
-            {currentLassoStroke.length > 1 && (
-              <Polyline
-                points={currentLassoStroke.map(([x, y]) => `${x},${y}`).join(' ')}
-                fill="none"
-                stroke="#818CF8"
-                strokeWidth={3}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            )}
-          </Svg>
+              )}
+            </Svg>
+          </View>
 
           {/* Top HUD Bar (Screenshot 2) */}
-          <View style={[styles.lassoTopHud, { top: insets.top + 8 }]}>
+          <View style={[styles.lassoTopHud, { top: insets.top + 8 }]} pointerEvents="none">
             <View style={styles.lassoHudCol}>
               <Text style={styles.lassoHudLabel}>RESTANTE</Text>
               <View style={styles.lassoHudRow}>
@@ -1128,12 +1375,15 @@ export default function MapScreen({ navigation }: Props) {
           </View>
 
           {/* Bottom Floating Bar in Lasso Mode (Screenshot 2) */}
-          <View style={[styles.lassoBottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View
+            style={[styles.lassoBottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}
+            pointerEvents="box-none"
+          >
             {/* Close Button */}
             <Pressable
               style={({ pressed }) => [styles.lassoRoundDarkBtn, pressed && styles.btnPressed]}
               onPress={handleCancelLasso}
-              hitSlop={8}
+              hitSlop={12}
             >
               <X size={22} color="#FFFFFF" />
             </Pressable>
@@ -1142,15 +1392,39 @@ export default function MapScreen({ navigation }: Props) {
             <Pressable
               style={({ pressed }) => [styles.lassoRoundWhiteBtn, pressed && styles.btnPressed]}
               onPress={handleUndoLasso}
-              hitSlop={8}
+              hitSlop={12}
             >
               <RotateCcw size={20} color="#0F172A" />
+            </Pressable>
+
+            {/* Mode Switch Button: Desenhar vs Mover Mapa */}
+            <Pressable
+              style={({ pressed }) => [
+                styles.lassoToggleModeBtn,
+                lassoSubMode === 'draw' ? styles.lassoToggleModeBtnDraw : styles.lassoToggleModeBtnPan,
+                pressed && styles.btnPressed,
+              ]}
+              onPress={() => setLassoSubMode(lassoSubMode === 'draw' ? 'pan' : 'draw')}
+              hitSlop={8}
+            >
+              {lassoSubMode === 'draw' ? (
+                <>
+                  <PenTool size={16} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.lassoToggleModeText}>DESENHAR</Text>
+                </>
+              ) : (
+                <>
+                  <Hand size={16} color="#FFFFFF" strokeWidth={2.5} />
+                  <Text style={styles.lassoToggleModeText}>MOVER MAPA</Text>
+                </>
+              )}
             </Pressable>
 
             {/* Confirm & Optimize Button */}
             <Pressable
               style={({ pressed }) => [styles.lassoConfirmBtn, pressed && styles.btnPressed]}
               onPress={handleConfirmLasso}
+              hitSlop={8}
             >
               <Text style={styles.lassoConfirmBtnText}>CONFIRMAR E OTIMIZAR</Text>
             </Pressable>
@@ -1226,24 +1500,47 @@ export default function MapScreen({ navigation }: Props) {
         onClose={() => setShowFuelHUD(false)}
       />
 
-      {/* Floating Action Controls on Right */}
-      <FloatingMapControls
-        followGPS={followGPS}
-        hasRoute={!!route}
-        lassoMode={lassoMode}
-        diagStatus={diagStatus}
-        onOpenLayers={() => setShowLayersModal(true)}
-        onFitBounds={fitRoute}
-        onToggleFollowGPS={() => {
-          const next = !followGPS;
-          setFollowGPS(next);
-          if (currentLocation) {
-            cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
-          }
-        }}
-        onToggleLasso={handleToggleLasso}
-        onOpenSettings={() => setShowConfigModal(true)}
-      />
+      {/* Floating Action Controls on Right (Esconde suavemente ao arrastar o modal para cima) */}
+      <Animated.View
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            opacity: sheetTranslateY.interpolate({
+              inputRange: [TRANS_EXPANDED, TRANS_HALF, TRANS_COLLAPSED],
+              outputRange: [0, 0.2, 1],
+              extrapolate: 'clamp',
+            }),
+            transform: [
+              {
+                translateX: sheetTranslateY.interpolate({
+                  inputRange: [TRANS_EXPANDED, TRANS_HALF, TRANS_COLLAPSED],
+                  outputRange: [70, 30, 0],
+                  extrapolate: 'clamp',
+                }),
+              },
+            ],
+          },
+        ]}
+        pointerEvents={sheetState === 'expanded' ? 'none' : 'box-none'}
+      >
+        <FloatingMapControls
+          followGPS={followGPS}
+          hasRoute={!!route}
+          lassoMode={lassoMode}
+          diagStatus={diagStatus}
+          onOpenLayers={() => setShowLayersModal(true)}
+          onFitBounds={fitRoute}
+          onToggleFollowGPS={() => {
+            const next = !followGPS;
+            setFollowGPS(next);
+            if (currentLocation) {
+              cameraRef.current?.setStop({ center: currentLocation, zoom: 15, duration: 800 });
+            }
+          }}
+          onToggleLasso={handleToggleLasso}
+          onOpenSettings={() => setShowConfigModal(true)}
+        />
+      </Animated.View>
 
       {/* Map Layers Modal */}
       <MapDisplayModal
@@ -1334,25 +1631,14 @@ export default function MapScreen({ navigation }: Props) {
         routeDurationMin={Math.round((routeInfo?.duration ?? 0) / 60)}
       />
 
-      {/* Quick Actions Popup Menu (Screenshot 1) */}
+      {/* Quick Actions Popup Menu */}
       <QuickActionsMenuModal
         visible={showQuickActionsModal}
         onClose={() => setShowQuickActionsModal(false)}
         onReoptimize={() => optimizeRoute(currentLocation || undefined)}
-        onLasso={() => {
-          setShowQuickActionsModal(false);
-          setLassoMode(true);
-          setLassoLoops([]);
-          setCurrentLassoStroke([]);
-          setLassoSelectedStopKeys(new Set());
-        }}
         onShareRoute={() => {
           Alert.alert('Compartilhar Rota', 'Link de rota gerado com sucesso!');
         }}
-        onSetStartEnd={() => {
-          Alert.alert('Definir Início/Fim', 'Toque em uma parada no mapa para alternar o início/fim.');
-        }}
-        onOrganizeCargo={() => setShowListsModal(true)}
       />
 
       {/* Quick RG Generator Modal (Screenshot 3) */}
@@ -1893,6 +2179,17 @@ export default function MapScreen({ navigation }: Props) {
         onClose={() => setShowListsModal(false)}
         onListChanged={() => reloadDeliveries()}
       />
+
+      {/* Loading Modal Overlay com Texto Explicativo */}
+      {optimizing && (
+        <View style={styles.loadingModalOverlay} pointerEvents="auto">
+          <View style={styles.loadingModalCard}>
+            <ActivityIndicator size="large" color="#4F46E5" />
+            <Text style={styles.loadingModalTitle}>Otimizando rotas</Text>
+            <Text style={styles.loadingModalSub}>Calculando a melhor sequência e tempo estimado com Mapbox...</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -2184,6 +2481,32 @@ const createScreenStyles = (colors: any) =>
       fontWeight: '900',
       color: '#FFFFFF',
       letterSpacing: 0.8,
+    },
+    lassoToggleModeBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 48,
+      paddingHorizontal: spacing.md,
+      borderRadius: 24,
+      gap: 6,
+      ...shadows.md,
+    },
+    lassoToggleModeBtnDraw: {
+      backgroundColor: '#7C3AED',
+      borderWidth: 1,
+      borderColor: '#A78BFA',
+    },
+    lassoToggleModeBtnPan: {
+      backgroundColor: '#2563EB',
+      borderWidth: 1,
+      borderColor: '#60A5FA',
+    },
+    lassoToggleModeText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '800',
+      letterSpacing: 0.5,
     },
 
     /* ── Persistent Floating Action Bar on Map ── */
@@ -2704,6 +3027,70 @@ const createScreenStyles = (colors: any) =>
       fontSize: 14,
       color: '#FFFFFF',
       fontWeight: '700',
+    },
+
+    /* Loop Badges ('1', '2', '3') */
+    loopBadgeContainer: {
+      position: 'absolute',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 100,
+    },
+    loopBadgeCircle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: '#6366F1',
+      borderWidth: 2.5,
+      borderColor: '#FFFFFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+      ...shadows.md,
+      elevation: 8,
+    },
+    loopBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '900',
+    },
+
+    /* Loading Modal Overlay com Texto Explicativo */
+    loadingModalOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(10, 15, 30, 0.75)',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      paddingHorizontal: spacing.lg,
+    },
+    loadingModalCard: {
+      width: '100%',
+      maxWidth: 320,
+      backgroundColor: colors.surface,
+      borderRadius: radius.xl,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingVertical: spacing.xl,
+      paddingHorizontal: spacing.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: spacing.sm,
+      ...shadows.xl,
+      elevation: 12,
+    },
+    loadingModalTitle: {
+      ...typography.title,
+      color: colors.text,
+      fontWeight: '800',
+      fontSize: 17,
+      textAlign: 'center',
+      marginTop: spacing.xs,
+    },
+    loadingModalSub: {
+      ...typography.caption,
+      color: colors.textSecondary,
+      textAlign: 'center',
+      lineHeight: 18,
     },
   });
 

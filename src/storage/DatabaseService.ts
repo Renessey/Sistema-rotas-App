@@ -398,6 +398,51 @@ export class DatabaseService {
     );
   }
 
+  static updateDelivery(
+    id: number,
+    updates: Partial<DeliveryEntity> & { orderIndex?: number },
+  ): void {
+    const db = this.getDb();
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    const seq = updates.sequence ?? updates.ordem ?? updates.orderIndex;
+    if (seq !== undefined) {
+      fields.push('ordem = ?', 'sequence = ?');
+      values.push(seq, seq);
+    }
+    if (updates.status !== undefined) {
+      fields.push('status = ?');
+      values.push(updates.status);
+    }
+    if (updates.destination !== undefined) {
+      fields.push('destination = ?', 'name = ?', 'address = ?');
+      values.push(updates.destination, updates.destination, updates.destination);
+    }
+    if (updates.latitude !== undefined) {
+      fields.push('latitude = ?');
+      values.push(updates.latitude);
+    }
+    if (updates.longitude !== undefined) {
+      fields.push('longitude = ?');
+      values.push(updates.longitude);
+    }
+    if (updates.notes !== undefined) {
+      fields.push('notes = ?');
+      values.push(updates.notes);
+    }
+    if (updates.failReason !== undefined) {
+      fields.push('failReason = ?');
+      values.push(updates.failReason);
+    }
+
+    fields.push('updatedAt = ?');
+    values.push(Date.now());
+    values.push(id);
+
+    db.executeSync(`UPDATE deliveries SET ${fields.join(', ')} WHERE id = ?;`, values);
+  }
+
   /**
    * Limpa todas as entregas do banco (ou de uma lista específica se listId for informado).
    */

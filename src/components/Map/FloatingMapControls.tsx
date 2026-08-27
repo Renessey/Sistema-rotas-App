@@ -109,7 +109,7 @@ const createStyles = (themeColors: any) =>
     floatingStack: {
       position: 'absolute',
       right: spacing.md,
-      bottom: 270,
+      bottom: 180,
       gap: spacing.sm + 2,
       zIndex: 20,
     },
