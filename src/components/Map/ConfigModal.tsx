@@ -6,7 +6,6 @@ import {
   Pressable,
   StyleSheet,
   TextInput,
-  ActivityIndicator,
   Animated,
   ScrollView,
 } from 'react-native';
@@ -21,7 +20,8 @@ import {
   Fuel,
   ChevronRight,
   Check,
-  AlertTriangle,
+  RotateCw,
+  Copy,
 } from 'lucide-react-native';
 
 const FUEL_STORAGE_KEY = '@rotasimples:fuel_config';
@@ -42,6 +42,14 @@ interface ConfigModalProps {
 
 type SubModal = null | 'docs' | 'reoptimize' | 'fuel';
 
+function generateRandomRg(): { raw: string; formatted: string } {
+  const num = Math.floor(10000000 + Math.random() * 90000000).toString();
+  const digit = Math.floor(Math.random() * 10).toString();
+  const raw = `${num}${digit}`;
+  const formatted = `${raw.slice(0, 2)}.${raw.slice(2, 5)}.${raw.slice(5, 8)}-${raw.slice(8)}`;
+  return { raw, formatted };
+}
+
 export function ConfigModal({
   visible,
   onClose,
@@ -55,8 +63,9 @@ export function ConfigModal({
   const styles = React.useMemo(() => createStyles(colors), [colors]);
 
   const [subModal, setSubModal] = useState<SubModal>(null);
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [docsGenerated, setDocsGenerated] = useState(false);
+  const [currentRg, setCurrentRg] = useState(generateRandomRg());
+  const [useFormattedRg, setUseFormattedRg] = useState(true);
+  const [rgCopied, setRgCopied] = useState(false);
   const [fuelConfig, setFuelConfig] = useState<FuelConfig>({ kmPerLiter: '', pricePerLiter: '' });
   const scaleAnim = React.useRef(new Animated.Value(0.88)).current;
   const opacityAnim = React.useRef(new Animated.Value(0)).current;
@@ -64,7 +73,8 @@ export function ConfigModal({
   useEffect(() => {
     if (visible) {
       setSubModal(null);
-      setDocsGenerated(false);
+      setCurrentRg(generateRandomRg());
+      setRgCopied(false);
       Animated.parallel([
         Animated.spring(scaleAnim, { toValue: 1, friction: 7, tension: 60, useNativeDriver: true }),
         Animated.timing(opacityAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
@@ -85,14 +95,14 @@ export function ConfigModal({
     }
   }, [visible, scaleAnim, opacityAnim]);
 
-  const handleGenerateDocs = () => {
-    setDocsLoading(true);
-    setDocsGenerated(false);
-    // Simulates async document generation (RG numbers stub)
-    setTimeout(() => {
-      setDocsLoading(false);
-      setDocsGenerated(true);
-    }, 2200);
+  const handleGenerateNewRg = () => {
+    setCurrentRg(generateRandomRg());
+    setRgCopied(false);
+  };
+
+  const handleCopyRg = () => {
+    setRgCopied(true);
+    setTimeout(() => setRgCopied(false), 2000);
   };
 
   const handleFuelConfirm = async () => {
@@ -106,57 +116,77 @@ export function ConfigModal({
 
   if (!visible) return null;
 
-  // ─── Sub-modal: Gerar Documentos ─────────────────────────────────────────
+  // ─── Sub-modal: Gerar Documentos (RG Aleatório) ──────────────────────────
   if (subModal === 'docs') {
+    const displayValue = useFormattedRg ? currentRg.formatted : currentRg.raw;
+
     return (
       <Modal visible transparent animationType="fade" onRequestClose={() => setSubModal(null)}>
         <View style={styles.overlay}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setSubModal(null)} />
           <View style={[styles.subCard, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
+            {/* Header */}
             <View style={styles.subHeader}>
-              <View style={styles.iconWrap}>
+              <View style={[styles.iconWrap, { backgroundColor: colors.primaryGhost }]}>
                 <FileText size={20} color={colors.primary} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.subTitle}>Gerar Documentos</Text>
-                <Text style={styles.subSubtitle}>Geração de números de RG aleatórios</Text>
+                <Text style={styles.subTitle}>Gerador de Documentos</Text>
+                <Text style={styles.subSubtitle}>Número de RG aleatório na tela</Text>
               </View>
               <Pressable style={styles.closeBtn} onPress={() => setSubModal(null)} hitSlop={8}>
                 <X size={16} color={colors.textMuted} />
               </Pressable>
             </View>
 
-            {docsGenerated ? (
-              <View style={styles.docsSuccessBox}>
-                <Check size={24} color={colors.success} />
-                <Text style={styles.docsSuccessText}>Documentos gerados com sucesso!</Text>
-                <Text style={styles.docsSuccessSubText}>
-                  {Math.floor(Math.random() * 40 + 10)} registros criados
-                </Text>
+            {/* RG Display Card */}
+            <View style={styles.rgDisplayCard}>
+              <View style={styles.rgCardHeader}>
+                <Text style={styles.rgCardLabel}>REGISTRO GERAL (RG)</Text>
+                <Pressable
+                  style={styles.formatTogglePill}
+                  onPress={() => setUseFormattedRg((prev) => !prev)}
+                >
+                  <Text style={styles.formatToggleText}>
+                    {useFormattedRg ? 'FORMATADO' : 'SEM PONTUAÇÃO'}
+                  </Text>
+                </Pressable>
               </View>
-            ) : (
-              <View style={styles.docsInfoBox}>
-                <AlertTriangle size={16} color={colors.warning} />
-                <Text style={styles.docsInfoText}>
-                  Serão gerados números de RG aleatórios para fins de teste/demonstração.
-                </Text>
-              </View>
-            )}
 
-            <Pressable
-              style={[styles.primaryBtn, docsLoading && styles.btnDisabled]}
-              onPress={handleGenerateDocs}
-              disabled={docsLoading}
-            >
-              {docsLoading ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <FileText size={16} color="#FFFFFF" />
-              )}
-              <Text style={styles.primaryBtnText}>
-                {docsLoading ? 'Gerando...' : docsGenerated ? 'Gerar Novamente' : 'Gerar Documentos'}
-              </Text>
-            </Pressable>
+              <Text style={styles.rgNumberText}>{displayValue}</Text>
+            </View>
+
+            {/* Action Buttons */}
+            <View style={styles.twoButtonRow}>
+              <Pressable
+                style={({ pressed }) => [styles.secondaryRgBtn, pressed && styles.btnPressed]}
+                onPress={handleGenerateNewRg}
+              >
+                <RotateCw size={16} color={colors.primary} />
+                <Text style={styles.secondaryRgBtnText}>Gerar Outro</Text>
+              </Pressable>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.primaryRgBtn,
+                  rgCopied && styles.primaryRgBtnCopied,
+                  pressed && styles.btnPressed,
+                ]}
+                onPress={handleCopyRg}
+              >
+                {rgCopied ? (
+                  <>
+                    <Check size={16} color="#FFFFFF" strokeWidth={2.5} />
+                    <Text style={styles.primaryBtnText}>Copiado!</Text>
+                  </>
+                ) : (
+                  <>
+                    <Copy size={16} color="#FFFFFF" />
+                    <Text style={styles.primaryBtnText}>Copiar RG</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -251,19 +281,21 @@ export function ConfigModal({
                 placeholderTextColor={colors.textMuted}
               />
             </View>
+
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Preço por litro (R$)</Text>
+              <Text style={styles.inputLabel}>Preço do combustível por litro (R$)</Text>
               <TextInput
                 style={styles.textInput}
                 value={fuelConfig.pricePerLiter}
                 onChangeText={(v) => setFuelConfig((c) => ({ ...c, pricePerLiter: v }))}
                 keyboardType="decimal-pad"
-                placeholder="Ex: 6.49"
+                placeholder="Ex: 5.89"
                 placeholderTextColor={colors.textMuted}
               />
             </View>
 
-            {litersNeeded > 0 && (
+            {/* Route summary preview */}
+            {routeDistanceKm > 0 && kmL > 0 && (
               <View style={styles.fuelPreview}>
                 <View style={styles.fuelPreviewRow}>
                   <Text style={styles.fuelPreviewLabel}>Distância total da rota</Text>
@@ -305,7 +337,7 @@ export function ConfigModal({
     );
   }
 
-  // ─── Main Config Modal ────────────────────────────────────────────────────
+  // ─── Main Config Modal (Opções da Rota) ───────────────────────────────────
   return (
     <Modal visible={visible} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.overlay}>
@@ -315,7 +347,7 @@ export function ConfigModal({
         >
           {/* Header */}
           <View style={styles.mainHeader}>
-            <Text style={styles.mainTitle}>Configurações Rápidas</Text>
+            <Text style={styles.mainTitle}>Opções da Rota</Text>
             <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
               <X size={16} color={colors.textMuted} />
             </Pressable>
@@ -326,14 +358,17 @@ export function ConfigModal({
             {/* Gerar Documentos */}
             <Pressable
               style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-              onPress={() => setSubModal('docs')}
+              onPress={() => {
+                handleGenerateNewRg();
+                setSubModal('docs');
+              }}
             >
               <View style={[styles.menuIconWrap, { backgroundColor: colors.primaryGhost }]}>
                 <FileText size={20} color={colors.primary} />
               </View>
               <View style={styles.menuTextWrap}>
-                <Text style={styles.menuItemTitle}>Gerar Documentos</Text>
-                <Text style={styles.menuItemSub}>Gera números de RG aleatórios</Text>
+                <Text style={styles.menuItemTitle}>Gerar Documentos (RG)</Text>
+                <Text style={styles.menuItemSub}>Gera número de RG aleatório na tela</Text>
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
@@ -348,7 +383,7 @@ export function ConfigModal({
               </View>
               <View style={styles.menuTextWrap}>
                 <Text style={styles.menuItemTitle}>Reotimizar Rota</Text>
-                <Text style={styles.menuItemSub}>Recalcula a ordem das paradas pendentes</Text>
+                <Text style={styles.menuItemSub}>Recalcula a melhor ordem das paradas</Text>
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
@@ -363,9 +398,7 @@ export function ConfigModal({
               </View>
               <View style={styles.menuTextWrap}>
                 <Text style={styles.menuItemTitle}>Consumo de Combustível</Text>
-                <Text style={styles.menuItemSub}>
-                  {fuelConfig.kmPerLiter ? `${fuelConfig.kmPerLiter} km/L · R$ ${fuelConfig.pricePerLiter}/L (salvo)` : 'Configurar consumo e custo estimado'}
-                </Text>
+                <Text style={styles.menuItemSub}>Calcula gastos estimados da rota (km/L)</Text>
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
@@ -380,20 +413,32 @@ const createStyles = (colors: any) =>
   StyleSheet.create({
     overlay: {
       flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
       backgroundColor: 'rgba(15, 23, 42, 0.65)',
-      paddingHorizontal: spacing.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.md,
     },
     mainCard: {
       width: '100%',
+      maxWidth: 380,
       backgroundColor: colors.surface,
-      borderRadius: radius.xxl,
+      borderRadius: radius.xl,
       padding: spacing.lg,
       gap: spacing.md,
-      ...shadows.xl,
       borderWidth: 1,
       borderColor: colors.border,
+      ...shadows.xl,
+    },
+    subCard: {
+      width: '100%',
+      maxWidth: 380,
+      backgroundColor: colors.surface,
+      borderRadius: radius.xl,
+      padding: spacing.lg,
+      gap: spacing.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      ...shadows.xl,
     },
     mainHeader: {
       flexDirection: 'row',
@@ -405,38 +450,27 @@ const createStyles = (colors: any) =>
       color: colors.text,
       fontWeight: '800',
     },
-    subCard: {
-      width: '100%',
-      backgroundColor: colors.surface,
-      borderRadius: radius.xxl,
-      padding: spacing.lg,
-      gap: spacing.md,
-      ...shadows.xl,
-      borderWidth: 1,
-      borderColor: colors.border,
-    },
     subHeader: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: spacing.sm,
     },
+    iconWrap: {
+      width: 40,
+      height: 40,
+      borderRadius: radius.md,
+      backgroundColor: colors.primaryGhost,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     subTitle: {
-      ...typography.title,
+      ...typography.bodyMedium,
       color: colors.text,
       fontWeight: '800',
     },
     subSubtitle: {
       ...typography.caption,
       color: colors.textMuted,
-      marginTop: 1,
-    },
-    iconWrap: {
-      width: 44,
-      height: 44,
-      borderRadius: radius.md,
-      backgroundColor: colors.successGhost,
-      alignItems: 'center',
-      justifyContent: 'center',
     },
     closeBtn: {
       width: 32,
@@ -479,6 +513,83 @@ const createStyles = (colors: any) =>
       ...typography.caption,
       color: colors.textMuted,
     },
+    // ─── RG Display Styles ───
+    rgDisplayCard: {
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.lg,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      gap: spacing.sm,
+      alignItems: 'center',
+      ...shadows.sm,
+    },
+    rgCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      width: '100%',
+    },
+    rgCardLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: colors.textMuted,
+      letterSpacing: 0.5,
+    },
+    formatTogglePill: {
+      backgroundColor: colors.primaryGhost,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: radius.full,
+    },
+    formatToggleText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: colors.primary,
+      letterSpacing: 0.5,
+    },
+    rgNumberText: {
+      fontSize: 26,
+      fontWeight: '900',
+      color: colors.text,
+      letterSpacing: 2,
+      paddingVertical: spacing.xs,
+    },
+    secondaryRgBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      gap: 6,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    secondaryRgBtnText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.primary,
+    },
+    primaryRgBtn: {
+      flex: 1.2,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+      borderRadius: radius.md,
+      paddingVertical: spacing.md,
+      gap: 6,
+      ...shadows.sm,
+    },
+    primaryRgBtnCopied: {
+      backgroundColor: colors.success,
+    },
+    btnPressed: {
+      opacity: 0.85,
+      transform: [{ scale: 0.98 }],
+    },
     docsInfoBox: {
       flexDirection: 'row',
       gap: spacing.sm,
@@ -494,24 +605,6 @@ const createStyles = (colors: any) =>
       color: colors.warning,
       flex: 1,
       lineHeight: 20,
-    },
-    docsSuccessBox: {
-      alignItems: 'center',
-      gap: spacing.xs,
-      backgroundColor: colors.successGhost,
-      padding: spacing.md,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.success + '44',
-    },
-    docsSuccessText: {
-      ...typography.bodyMedium,
-      color: colors.success,
-      fontWeight: '700',
-    },
-    docsSuccessSubText: {
-      ...typography.caption,
-      color: colors.success,
     },
     primaryBtn: {
       flexDirection: 'row',

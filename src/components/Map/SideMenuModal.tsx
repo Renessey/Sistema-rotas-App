@@ -17,11 +17,11 @@ import {
   FileSpreadsheet,
   ListOrdered,
   Plus,
-  Crosshair,
-  Layers,
   Settings,
   Trash2,
   ChevronRight,
+  Sun,
+  Moon,
 } from 'lucide-react-native';
 
 interface SideMenuModalProps {
@@ -29,8 +29,8 @@ interface SideMenuModalProps {
   onClose: () => void;
   onImportPress: () => void;
   onAddStopPress: () => void;
-  onFitRoutePress: () => void;
-  onLayersPress: () => void;
+  onFitRoutePress?: () => void;
+  onLayersPress?: () => void;
   onSettingsPress: () => void;
   onDiagnosticPress?: () => void;
   onListsPress?: () => void;
@@ -54,7 +54,7 @@ export function SideMenuModal({
   onClearRoutePress,
   totalDeliveriesCount,
 }: SideMenuModalProps) {
-  const { colors } = useTheme();
+  const { colors, theme, toggleTheme } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
   const slideAnim = React.useRef(new Animated.Value(-DRAWER_WIDTH)).current;
@@ -127,9 +127,25 @@ export function SideMenuModal({
               </View>
             </View>
 
-            <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
-              <X size={16} color={colors.textSecondary} />
-            </Pressable>
+            <View style={styles.headerRightActions}>
+              {/* Botão de Alternar Tema Direto (Claro / Escuro) */}
+              <Pressable
+                style={({ pressed }) => [styles.themeBtn, pressed && styles.btnPressed]}
+                onPress={toggleTheme}
+                hitSlop={8}
+                accessibilityLabel="Alternar Modo Claro e Escuro"
+              >
+                {theme === 'dark' ? (
+                  <Sun size={17} color="#FBBF24" strokeWidth={2.2} />
+                ) : (
+                  <Moon size={17} color="#6366F1" strokeWidth={2.2} />
+                )}
+              </Pressable>
+
+              <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
+                <X size={16} color={colors.textSecondary} />
+              </Pressable>
+            </View>
           </View>
 
           {/* Stats Bar */}
@@ -197,44 +213,6 @@ export function SideMenuModal({
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
-
-            {/* Enquadrar Rota */}
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                onClose();
-                onFitRoutePress();
-              }}
-            >
-              <View style={[styles.itemIconWrap, { backgroundColor: colors.warningGhost }]}>
-                <Crosshair size={18} color={colors.warning} />
-              </View>
-              <View style={styles.itemTextWrap}>
-                <Text style={styles.itemTitle}>Enquadrar Rota</Text>
-                <Text style={styles.itemSub}>Ver todas as paradas no mapa</Text>
-              </View>
-              <ChevronRight size={18} color={colors.textDisabled} />
-            </Pressable>
-
-            {/* Camadas do Mapa */}
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-              onPress={() => {
-                onClose();
-                onLayersPress();
-              }}
-            >
-              <View style={[styles.itemIconWrap, { backgroundColor: colors.primaryGhost }]}>
-                <Layers size={18} color={colors.primary} />
-              </View>
-              <View style={styles.itemTextWrap}>
-                <Text style={styles.itemTitle}>Camadas do Mapa</Text>
-                <Text style={styles.itemSub}>Estilos, satélite e veículo</Text>
-              </View>
-              <ChevronRight size={18} color={colors.textDisabled} />
-            </Pressable>
-
-            {/* Diagnóstico do Sistema — movido para a tela de Configurações (Task 4) */}
 
             {/* Ajustes */}
             <Pressable
@@ -343,6 +321,21 @@ const createStyles = (colors: any) =>
       fontWeight: '500',
       color: colors.textMuted,
     },
+    headerRightActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs + 2,
+    },
+    themeBtn: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: colors.surfaceElevated,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
     closeBtn: {
       width: 32,
       height: 32,
@@ -352,6 +345,10 @@ const createStyles = (colors: any) =>
       justifyContent: 'center',
       borderWidth: 1,
       borderColor: colors.border,
+    },
+    btnPressed: {
+      opacity: 0.8,
+      transform: [{ scale: 0.95 }],
     },
     statsBar: {
       flexDirection: 'row',

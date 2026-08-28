@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows } from '../../theme';
-import { LocateFixed, Layers, Settings, Scissors } from 'lucide-react-native';
+import { LocateFixed, Layers, Scissors } from 'lucide-react-native';
 
 export interface FloatingMapControlsProps {
   followGPS: boolean;
@@ -13,7 +13,6 @@ export interface FloatingMapControlsProps {
   onFitBounds?: () => void;
   onToggleFollowGPS: () => void;
   onToggleLasso?: () => void;
-  onOpenSettings?: () => void;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onRefresh?: () => void;
@@ -22,17 +21,12 @@ export interface FloatingMapControlsProps {
 export function FloatingMapControls({
   followGPS,
   lassoMode = false,
-  diagStatus = 'unknown',
   onOpenLayers,
   onToggleFollowGPS,
   onToggleLasso,
-  onOpenSettings,
 }: FloatingMapControlsProps) {
   const { colors } = useTheme();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
-
-  const badgeColor =
-    diagStatus === 'ok' ? '#22C55E' : diagStatus === 'error' ? '#EF4444' : '#94A3B8';
 
   return (
     <View style={styles.container} pointerEvents="box-none">
@@ -81,21 +75,6 @@ export function FloatingMapControls({
             />
           </Pressable>
         )}
-
-        {/* Settings Button with Diag Status Badge */}
-        {onOpenSettings && (
-          <View style={styles.settingsBtnWrap}>
-            <Pressable
-              style={({ pressed }) => [styles.floatingBtn, pressed && styles.btnPressed]}
-              onPress={onOpenSettings}
-              hitSlop={8}
-            >
-              <Settings size={20} color={colors.textSecondary} strokeWidth={2} />
-            </Pressable>
-            {/* Status Badge */}
-            <View style={[styles.statusBadge, { backgroundColor: badgeColor }]} />
-          </View>
-        )}
       </View>
     </View>
   );
@@ -109,7 +88,7 @@ const createStyles = (themeColors: any) =>
     floatingStack: {
       position: 'absolute',
       right: spacing.md,
-      bottom: 180,
+      bottom: 260,
       gap: spacing.sm + 2,
       zIndex: 20,
     },
@@ -135,19 +114,5 @@ const createStyles = (themeColors: any) =>
     btnPressed: {
       opacity: 0.85,
       transform: [{ scale: 0.95 }],
-    },
-    settingsBtnWrap: {
-      position: 'relative',
-    },
-    statusBadge: {
-      position: 'absolute',
-      top: -3,
-      right: -3,
-      width: 11,
-      height: 11,
-      borderRadius: 5.5,
-      borderWidth: 2,
-      borderColor: themeColors.background,
-      zIndex: 5,
     },
   });

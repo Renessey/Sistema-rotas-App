@@ -55,7 +55,7 @@ const VEHICLES: { id: Costing; label: string; Icon: React.ComponentType<{ size: 
 ];
 
 export default function SettingsScreen({ navigation }: Props) {
-  const { colors, theme, toggleTheme } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
 
@@ -359,30 +359,7 @@ export default function SettingsScreen({ navigation }: Props) {
         </View>
 
 
-        {/* 3. Tema do Aplicativo (Claro / Escuro) */}
-        <View style={styles.card}>
-          <View style={styles.cardTitleRow}>
-            {theme === 'dark' ? <Moon size={16} color={colors.primary} /> : <Sun size={16} color={colors.primary} />}
-            <Text style={styles.sectionHeader}>APARÊNCIA DO APLICATIVO</Text>
-          </View>
-
-          <View style={styles.rowBetween}>
-            <View style={styles.rowLeft}>
-              <View>
-                <Text style={styles.rowTitle}>Modo Escuro (Dark Mode)</Text>
-                <Text style={styles.rowSub}>Interface com tema noturno em todo o aplicativo</Text>
-              </View>
-            </View>
-            <Switch
-              value={theme === 'dark'}
-              onValueChange={toggleTheme}
-              trackColor={{ false: colors.borderStrong, true: colors.primary }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-        </View>
-
-        {/* 4. Tipo e Estilo do Mapa */}
+        {/* 3. Tipo e Estilo do Mapa */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Layers size={16} color={colors.primary} />
