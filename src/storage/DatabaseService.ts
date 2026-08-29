@@ -391,13 +391,73 @@ export class DatabaseService {
     db.executeSync(
       `UPDATE deliveries SET
         latitude = ?, longitude = ?,
-        rawLatitude = COALESCE(?, rawLatitude),
-        rawLongitude = COALESCE(?, rawLongitude),
+        rawLatitude = COALESCE(rawLatitude, ?),
+        rawLongitude = COALESCE(rawLongitude, ?),
         status = 'pending',
         updatedAt = ?
       WHERE id = ?;`,
       [lat, lon, rawLat ?? String(lat), rawLon ?? String(lon), Date.now(), id],
     );
+  }
+
+  /**
+   * Restaura as coordenadas originais da planilha para uma entrega (retroceder ajuste).
+   */
+  static restoreDeliveryOriginalCoords(id: number): { latitude: number; longitude: number } | null {
+    const db = this.getDb();
+    const res = db.executeSync(
+      'SELECT rawLatitude, rawLongitude, originalData FROM deliveries WHERE id = ? LIMIT 1;',
+      [id],
+    );
+    if (!res.rows || res.rows.length === 0) return null;
+    const row = res.rows[0] as any;
+    let origLat: number | null = null;
+    let origLon: number | null = null;
+
+    if (row.rawLatitude && row.rawLongitude) {
+      const lat = parseFloat(String(row.rawLatitude).replace(',', '.'));
+      const lon = parseFloat(String(row.rawLongitude).replace(',', '.'));
+      if (!isNaN(lat) && !isNaN(lon) && (lat !== 0 || lon !== 0)) {
+        origLat = lat;
+        origLon = lon;
+      }
+    }
+
+    if (origLat === null && row.originalData) {
+      try {
+        const obj = JSON.parse(row.originalData);
+        for (const [k, v] of Object.entries(obj)) {
+          const lk = k.toLowerCase();
+          if (lk.includes('lat')) {
+            const parsedLat = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
+            for (const [k2, v2] of Object.entries(obj)) {
+              const lk2 = k2.toLowerCase();
+              if (lk2.includes('lon') || lk2.includes('lng')) {
+                const parsedLon = typeof v2 === 'number' ? v2 : parseFloat(String(v2).replace(',', '.'));
+                if (!isNaN(parsedLat) && !isNaN(parsedLon) && (parsedLat !== 0 || parsedLon !== 0)) {
+                  origLat = parsedLat;
+                  origLon = parsedLon;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    if (origLat !== null && origLon !== null) {
+      db.executeSync(
+        `UPDATE deliveries SET
+          latitude = ?, longitude = ?,
+          status = 'pending',
+          updatedAt = ?
+        WHERE id = ?;`,
+        [origLat, origLon, Date.now(), id],
+      );
+      return { latitude: origLat, longitude: origLon };
+    }
+    return null;
   }
 
   static updateDeliveryNotes(id: number, notes: string): void {
@@ -765,6 +825,32 @@ export class DatabaseService {
     const db = this.getDb();
     try {
       db.executeSync('DELETE FROM address_history;');
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Remove um endereço do histórico quando o usuário desfaz/retrocede um ajuste manual.
+   */
+  static removeAddressHistory(params: {
+    address: string;
+    bairro?: string | null;
+    city?: string | null;
+    zipCode?: string | null;
+    number?: string | null;
+  }): void {
+    const db = this.getDb();
+    const normalized = getCanonicalAddressKey({
+      address: params.address,
+      bairro: params.bairro ?? undefined,
+      city: params.city ?? undefined,
+      zipCode: params.zipCode ?? undefined,
+      number: params.number ?? undefined,
+    });
+    if (!normalized) return;
+    try {
+      db.executeSync('DELETE FROM address_history WHERE normalized_address = ?;', [normalized]);
     } catch {
       // ignore
     }

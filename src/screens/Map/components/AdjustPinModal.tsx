@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import {
   Map as MapLibreMap,
+  MapRef,
   Camera,
   CameraRef,
   Marker,
@@ -38,6 +39,7 @@ interface AdjustPinModalProps {
   currentStyleUrl: string;
   onClose: () => void;
   onSave: (stop: RouteStop, newLat: number, newLng: number) => void;
+  onRevert?: (stop: RouteStop) => void;
 }
 
 export function AdjustPinModal({
@@ -46,18 +48,30 @@ export function AdjustPinModal({
   currentStyleUrl,
   onClose,
   onSave,
+  onRevert,
 }: AdjustPinModalProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
+  const mapRef = useRef<MapRef | null>(null);
   const cameraRef = useRef<CameraRef | null>(null);
 
-  // Coordenada original da planilha
-  const originalCoords: LngLat = useMemo(() => {
-    if (!stop) return [0, 0];
+  // Coordenada original importada da planilha (preservada de rawLatitude/rawLongitude)
+  const spreadsheetCoords: LngLat = useMemo(() => {
+    if (!stop || !stop.deliveries || stop.deliveries.length === 0) {
+      return stop ? [stop.longitude, stop.latitude] : [0, 0];
+    }
+    const d = stop.deliveries[0];
+    if (d.rawLatitude && d.rawLongitude) {
+      const lat = parseFloat(String(d.rawLatitude).replace(',', '.'));
+      const lon = parseFloat(String(d.rawLongitude).replace(',', '.'));
+      if (!isNaN(lat) && !isNaN(lon) && (lat !== 0 || lon !== 0)) {
+        return [lon, lat];
+      }
+    }
     return [stop.longitude, stop.latitude];
   }, [stop]);
 
-  // Coordenada alvo atualmente selecionada
+  // Coordenada alvo atualmente selecionada (centro da mira)
   const [targetCoords, setTargetCoords] = useState<LngLat>([0, 0]);
 
   // Sugestão encontrada pela busca de endereço
@@ -82,7 +96,7 @@ export function AdjustPinModal({
       // Executa busca automática da sugestão inicial via Geocoding
       handleSearchAddress(queryText, false);
 
-      // Centra a câmera na posição original
+      // Centra a câmera na posição atual
       setTimeout(() => {
         cameraRef.current?.setStop({
           center: initial,
@@ -92,6 +106,40 @@ export function AdjustPinModal({
       }, 300);
     }
   }, [stop, visible]);
+
+  // Extrai coordenadas de eventos do MapLibre
+  const handleMapCenterUpdate = useCallback(async (e?: any) => {
+    let coords: any = e?.geometry?.coordinates;
+    if (!coords || !Array.isArray(coords) || coords.length < 2) {
+      coords = e?.properties?.center;
+    }
+    if (!coords || !Array.isArray(coords) || coords.length < 2) {
+      coords = e?.nativeEvent?.geometry?.coordinates;
+    }
+    if (!coords || !Array.isArray(coords) || coords.length < 2) {
+      coords = e?.nativeEvent?.properties?.center;
+    }
+    if (!coords || !Array.isArray(coords) || coords.length < 2) {
+      coords = e?.nativeEvent?.center || e?.nativeEvent?.coordinates || e?.center;
+    }
+
+    if (Array.isArray(coords) && coords.length >= 2 && typeof coords[0] === 'number' && !isNaN(coords[0])) {
+      setTargetCoords([coords[0], coords[1]]);
+      return;
+    }
+
+    // Fallback: consulta diretamente a ponte nativa do mapa
+    if (mapRef.current) {
+      try {
+        const center = await mapRef.current.getCenter();
+        if (center && Array.isArray(center) && center.length >= 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+          setTargetCoords([center[0], center[1]]);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
 
   // Executa busca por geocoding
   const handleSearchAddress = async (query: string, moveCamera = true) => {
@@ -114,7 +162,7 @@ export function AdjustPinModal({
         }
       } else {
         if (moveCamera) {
-          Alert.alert('Busca de Endereço', 'Endereço não localizado pelo serviço de busca. Você pode ajustar o pino manualmente no mapa.');
+          Alert.alert('Busca de Endereço', 'Endereço não localizado pelo serviço de busca. Você pode ajustar o pino manualmente movendo o mapa.');
         }
       }
     } catch {
@@ -137,14 +185,39 @@ export function AdjustPinModal({
     });
   };
 
-  // Reseta para o pino original da planilha
+  // Move a mira e a câmera de volta para o ponto original da planilha
   const handleResetToOriginal = () => {
-    setTargetCoords(originalCoords);
+    setTargetCoords(spreadsheetCoords);
     cameraRef.current?.setStop({
-      center: originalCoords,
+      center: spreadsheetCoords,
       zoom: 17,
       duration: 400,
     });
+  };
+
+  // Retrocede/restaura a coordenada original da planilha gravando no SQLite
+  const handleRevertToSpreadsheet = () => {
+    if (!stop) return;
+    Alert.alert(
+      'Voltar ao Ponto da Planilha',
+      'Deseja restaurar as coordenadas originais da planilha para esta parada e atualizar o mapa?',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Restaurar Original',
+          style: 'destructive',
+          onPress: () => {
+            if (onRevert) {
+              onRevert(stop);
+            } else {
+              const [origLng, origLat] = spreadsheetCoords;
+              onSave(stop, origLat, origLng);
+            }
+            onClose();
+          },
+        },
+      ],
+    );
   };
 
   // Abre busca no aplicativo oficial do Google Maps / Navegador
@@ -157,13 +230,28 @@ export function AdjustPinModal({
     });
   };
 
-  // Salva a nova coordenada
-  const handleConfirmSave = () => {
+  // Salva a nova coordenada com confirmação e precisão
+  const handleConfirmSave = async () => {
     if (!stop) return;
     setSaving(true);
     try {
-      const [newLng, newLat] = targetCoords;
-      onSave(stop, newLat, newLng);
+      let finalLng = targetCoords[0];
+      let finalLat = targetCoords[1];
+
+      // Busca as coordenadas exatas do centro atual do mapa
+      if (mapRef.current) {
+        try {
+          const center = await mapRef.current.getCenter();
+          if (center && Array.isArray(center) && center.length >= 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+            finalLng = center[0];
+            finalLat = center[1];
+          }
+        } catch {
+          // fallback
+        }
+      }
+
+      onSave(stop, finalLat, finalLng);
       onClose();
     } catch {
       Alert.alert('Erro', 'Falha ao salvar a nova posição do pino.');
@@ -172,11 +260,11 @@ export function AdjustPinModal({
     }
   };
 
-  // Calcula a divergência em metros da posição original
+  // Calcula a divergência em metros da posição original da planilha
   const divergenceDistance = useMemo(() => {
-    if (!originalCoords || !targetCoords) return 0;
-    return Math.round(haversine(originalCoords, targetCoords));
-  }, [originalCoords, targetCoords]);
+    if (!spreadsheetCoords || !targetCoords) return 0;
+    return Math.round(haversine(spreadsheetCoords, targetCoords));
+  }, [spreadsheetCoords, targetCoords]);
 
   if (!stop) return null;
 
@@ -241,18 +329,15 @@ export function AdjustPinModal({
         {/* ── 3. Visualizador do Mapa com Pinos ── */}
         <View style={styles.mapContainer}>
           <MapLibreMap
+            ref={mapRef}
             style={styles.map}
             mapStyle={currentStyleUrl}
             compass={false}
             scaleBar={false}
-            onRegionDidChange={(e: any) => {
-              const coords = e?.geometry?.coordinates || e?.properties?.center;
-              if (coords && Array.isArray(coords) && coords.length >= 2) {
-                setTargetCoords([coords[0], coords[1]]);
-              }
-            }}
+            onRegionIsChanging={handleMapCenterUpdate}
+            onRegionDidChange={handleMapCenterUpdate}
             onPress={(e: any) => {
-              const coords = e?.geometry?.coordinates;
+              const coords = e?.geometry?.coordinates || e?.nativeEvent?.geometry?.coordinates;
               if (coords && Array.isArray(coords) && coords.length >= 2) {
                 const clicked: LngLat = [coords[0], coords[1]];
                 setTargetCoords(clicked);
@@ -265,13 +350,13 @@ export function AdjustPinModal({
           >
             <Camera
               ref={cameraRef}
-              initialViewState={{ center: originalCoords, zoom: 17 }}
+              initialViewState={{ center: targetCoords[0] ? targetCoords : spreadsheetCoords, zoom: 17 }}
               minZoom={3}
               maxZoom={20}
             />
 
             {/* 🔴 Marcador Fixo: Posição Original da Planilha */}
-            <Marker id="original-pin" lngLat={originalCoords} anchor="bottom">
+            <Marker id="original-pin" lngLat={spreadsheetCoords} anchor="bottom">
               <View style={styles.markerContainer}>
                 <View style={[styles.markerBadge, { backgroundColor: '#EF4444' }]}>
                   <Text style={styles.markerBadgeText}>🔴 Planilha</Text>
@@ -358,7 +443,7 @@ export function AdjustPinModal({
               onPress={handleResetToOriginal}
             >
               <RotateCcw size={14} color="#EF4444" />
-              <Text style={[styles.quickBtnText, { color: '#EF4444' }]}>Original (Vermelho)</Text>
+              <Text style={[styles.quickBtnText, { color: '#EF4444' }]}>Voltar à Planilha</Text>
             </Pressable>
 
             <Pressable
@@ -369,6 +454,20 @@ export function AdjustPinModal({
               <Text style={[styles.quickBtnText, { color: colors.primary }]}>Google Maps</Text>
             </Pressable>
           </View>
+
+          {/* Botão Principal de Retroceder / Restaurar Posição Original da Planilha */}
+          <Pressable
+            style={[
+              styles.revertBtn,
+              { backgroundColor: colors.dangerGhost, borderColor: colors.danger + '66' },
+            ]}
+            onPress={handleRevertToSpreadsheet}
+          >
+            <RotateCcw size={16} color={colors.danger} />
+            <Text style={[styles.revertBtnText, { color: colors.danger }]}>
+              Voltar ao Ponto Original da Planilha
+            </Text>
+          </Pressable>
 
           {/* Botão de Salvar */}
           <Pressable
@@ -604,6 +703,35 @@ const styles = StyleSheet.create({
   quickBtnText: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  modifiedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    gap: 6,
+    marginTop: spacing.xs,
+  },
+  modifiedBannerText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  revertBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 11,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    gap: 6,
+  },
+  revertBtnText: {
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
   saveBtn: {
     flexDirection: 'row',

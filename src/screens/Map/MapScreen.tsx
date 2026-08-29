@@ -27,7 +27,6 @@ import {
   MapModalsContainer,
   MapBottomSheet,
   LassoOverlay,
-  PersistentFloatingBar,
   StopDetailSheet,
   AdjustPinModal,
 } from './components';
@@ -104,6 +103,7 @@ export default function MapScreen({ navigation }: Props) {
     skipStop,
     deleteStop,
     updateStopCoordinates,
+    revertStopCoordinates,
     clearAllDeliveries,
   } = useMapDeliveries({
     cameraRef,
@@ -221,18 +221,7 @@ export default function MapScreen({ navigation }: Props) {
         />
       )}
 
-      {/* ── 3. Barra Flutuante de Otimizar / Finalizar ── */}
-      {!lassoMode && !activeStop && !showStopActionsModal && !showConfigModal && !showMenuModal && !showAddModal && !showListsModal && !showAdjustPinModal && (
-        <PersistentFloatingBar
-          sheetTranslateY={sheetTranslateY}
-          snapExpandedBottom={snapExpanded}
-          routeNeedsOptimization={routeNeedsOptimization}
-          optimizing={optimizing}
-          onOptimize={() => optimizeRoute()}
-        />
-      )}
-
-      {/* ── 4. Controles Flutuantes da Direita ── */}
+      {/* ── 3. Controles Flutuantes da Direita ── */}
       <Animated.View
         style={[
           StyleSheet.absoluteFill,
@@ -322,6 +311,7 @@ export default function MapScreen({ navigation }: Props) {
         currentStyleUrl={currentStyleUrl}
         onClose={closeAdjustPin}
         onSave={updateStopCoordinates}
+        onRevert={revertStopCoordinates}
       />
 
       {/* ── 8. Modais e Overlay de Carregamento ── */}

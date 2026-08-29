@@ -1,4 +1,4 @@
-import { Linking, Platform } from 'react-native';
+import { Linking, Platform, Alert } from 'react-native';
 import type { LngLat, ExternalNavApp } from '../../types/geo';
 import { formatPhoneBR } from '../../utils/addressParser';
 
@@ -8,6 +8,85 @@ import { formatPhoneBR } from '../../utils/addressParser';
  * Abre o app externo de navegação ou WhatsApp diretamente do app de entregas.
  */
 export class NavigationLauncher {
+  /**
+   * Constrói a URL oficial Universal do Google Maps com suporte a Multi-Paradas (Waypoints).
+   *
+   * Formato padrão:
+   * https://www.google.com/maps/dir/?api=1&origin=...&destination=...&waypoints=...&travelmode=driving
+   *
+   * @param stops Lista de paradas (RouteStop ou array de pontos com latitude/longitude)
+   * @param origin Coordenadas de origem [longitude, latitude] ou null (usa My+Location)
+   */
+  static buildGoogleMapsMultiStopUrl(
+    stops: Array<{ latitude: number; longitude: number; address?: string }>,
+    origin?: LngLat | null,
+  ): string | null {
+    if (!stops || stops.length === 0) return null;
+
+    // Filtra paradas com coordenadas válidas
+    const validStops = stops.filter(
+      (s) =>
+        typeof s.latitude === 'number' &&
+        typeof s.longitude === 'number' &&
+        !isNaN(s.latitude) &&
+        !isNaN(s.longitude) &&
+        (s.latitude !== 0 || s.longitude !== 0),
+    );
+
+    if (validStops.length === 0) return null;
+
+    // 1. Origem: coordenadas do GPS ou 'My+Location'
+    const originParam =
+      origin && origin[0] !== undefined && origin[1] !== undefined && !isNaN(origin[0]) && !isNaN(origin[1])
+        ? `${origin[1]},${origin[0]}`
+        : 'My+Location';
+
+    // 2. Destino Final: último item da lista
+    const lastStop = validStops[validStops.length - 1];
+    const destinationParam = `${lastStop.latitude},${lastStop.longitude}`;
+
+    // 3. Paradas Intermediárias (Waypoints): do primeiro até o penúltimo
+    if (validStops.length === 1) {
+      // Apenas 1 parada: omite waypoints
+      return `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destinationParam}&travelmode=driving`;
+    }
+
+    const intermediateStops = validStops.slice(0, -1);
+    const waypointsStr = intermediateStops
+      .map((s) => `${s.latitude},${s.longitude}`)
+      .join('|');
+
+    return `https://www.google.com/maps/dir/?api=1&origin=${originParam}&destination=${destinationParam}&waypoints=${encodeURIComponent(waypointsStr)}&travelmode=driving`;
+  }
+
+  /**
+   * Abre o aplicativo oficial do Google Maps (ou navegador) com o itinerário completo de múltiplas paradas.
+   */
+  static async openGoogleMapsMultiStop(
+    stops: Array<{ latitude: number; longitude: number; address?: string }>,
+    origin?: LngLat | null,
+  ): Promise<boolean> {
+    if (!stops || stops.length === 0) {
+      Alert.alert('Google Maps', 'Nenhuma parada disponível para traçar a rota.');
+      return false;
+    }
+
+    const url = this.buildGoogleMapsMultiStopUrl(stops, origin);
+    if (!url) {
+      Alert.alert('Google Maps', 'As paradas da rota não possuem coordenadas válidas.');
+      return false;
+    }
+
+    try {
+      await Linking.openURL(url);
+      return true;
+    } catch (error) {
+      console.warn('[NavigationLauncher] Falha ao abrir rota multi-paradas no Google Maps', error);
+      Alert.alert('Erro', 'Não foi possível abrir o Google Maps no dispositivo.');
+      return false;
+    }
+  }
+
   /**
    * Abre um app de navegação externo (Waze / Google Maps) com o destino.
    * Se o app não estiver instalado, abre no browser.

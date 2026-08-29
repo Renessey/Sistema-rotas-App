@@ -395,8 +395,6 @@ export function useMapDeliveries({
                 ...d,
                 latitude: newLat,
                 longitude: newLng,
-                rawLatitude: String(newLat),
-                rawLongitude: String(newLng),
                 snappedLatitude: undefined,
                 snappedLongitude: undefined,
               }
@@ -416,6 +414,48 @@ export function useMapDeliveries({
         zoom: 16,
         duration: 500,
       });
+
+      recalculateRoute();
+    },
+    [cameraRef, recalculateRoute],
+  );
+
+  const revertStopCoordinates = useCallback(
+    (stop: RouteStop) => {
+      let restoredLat: number | null = null;
+      let restoredLng: number | null = null;
+
+      stop.deliveries.forEach((d) => {
+        const res = DatabaseService.restoreDeliveryOriginalCoords(d.id);
+        if (res) {
+          restoredLat = res.latitude;
+          restoredLng = res.longitude;
+        }
+        // Remove do histórico de endereços memorizados
+        const addr = d.destination || d.address || stop.address;
+        if (addr) {
+          DatabaseService.removeAddressHistory({
+            address: addr,
+            bairro: d.bairro || stop.bairro,
+            city: d.city || stop.city,
+            zipCode: d.zipCode,
+          });
+        }
+      });
+
+      // Recarrega do banco e atualiza na memória
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+      setActiveStop(null);
+
+      if (restoredLat !== null && restoredLng !== null) {
+        cameraRef.current?.setStop({
+          center: [restoredLng, restoredLat],
+          zoom: 16,
+          duration: 500,
+        });
+      }
 
       recalculateRoute();
     },
@@ -468,6 +508,7 @@ export function useMapDeliveries({
     skipStop,
     deleteStop,
     updateStopCoordinates,
+    revertStopCoordinates,
     clearAllDeliveries,
   };
 }

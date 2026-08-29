@@ -159,8 +159,10 @@ export const createTimelineStyles = (colors: any) =>
   });
 
 // ─── Screen Styles (MapScreen) ───────────────────────────────────────────────
-export const createScreenStyles = (colors: any) =>
-  StyleSheet.create({
+export const createScreenStyles = (colors: any) => {
+  const isDark = colors.background === '#0f172a' || colors.text === '#f8fafc';
+
+  return StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: colors.background,
@@ -439,11 +441,66 @@ export const createScreenStyles = (colors: any) =>
       paddingBottom: spacing.xxl + 40,
     },
 
+    // ── Integrated Sheet Actions Bar (Otimizar e Finalizar) ──
+    sheetActionsBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: spacing.md,
+      paddingTop: spacing.xs + 2,
+      paddingBottom: spacing.xs,
+      gap: spacing.sm,
+    },
+    sheetOptBtn: {
+      flex: 1.15,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 42,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: isDark ? 'rgba(37, 99, 235, 0.22)' : '#2563EB',
+      borderWidth: isDark ? 1.5 : 1,
+      borderColor: isDark ? '#3B82F6' : '#1D4ED8',
+      gap: 6,
+      ...shadows.sm,
+    },
+    sheetOptBtnActive: {
+      backgroundColor: isDark ? 'rgba(99, 102, 241, 0.3)' : '#4F46E5',
+      borderColor: isDark ? '#818CF8' : '#4338CA',
+    },
+    sheetOptBtnText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: isDark ? '#93C5FD' : '#FFFFFF',
+      letterSpacing: 0.3,
+    },
+    sheetFinishBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      height: 42,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.22)' : '#059669',
+      borderWidth: isDark ? 1.5 : 1,
+      borderColor: isDark ? '#10B981' : '#047857',
+      gap: 6,
+      ...shadows.sm,
+    },
+    sheetFinishBtnText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: isDark ? '#6EE7B7' : '#FFFFFF',
+      letterSpacing: 0.3,
+    },
+
     // ── Rotas Header ──
     rotasHeaderRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
+      paddingHorizontal: spacing.md,
       paddingVertical: spacing.xs,
       marginTop: 2,
     },
@@ -895,3 +952,4 @@ export const createScreenStyles = (colors: any) =>
       lineHeight: 18,
     },
   });
+};

@@ -45,7 +45,7 @@ jest.mock('@op-engineering/op-sqlite', () => ({
       if (q.startsWith('UPDATE DELIVERIES SET') && q.includes('LATITUDE = ?')) {
         const lat = params[0];
         const lon = params[1];
-        const id = params[5];
+        const id = params[params.length - 1];
         const found = mockStore.deliveries.find((d) => d.id === id);
         if (found) {
           found.latitude = lat;
@@ -53,6 +53,12 @@ jest.mock('@op-engineering/op-sqlite', () => ({
           found.status = 'pending';
         }
         return { rows: [] };
+      }
+
+      if (q.startsWith('SELECT RAWLATITUDE, RAWLONGITUDE, ORIGINALDATA FROM DELIVERIES WHERE ID = ?')) {
+        const id = params[0];
+        const found = mockStore.deliveries.find((d) => d.id === id);
+        return { rows: found ? [found] : [] };
       }
 
       if (q.startsWith('SELECT * FROM DELIVERIES')) {
@@ -100,6 +106,12 @@ jest.mock('@op-engineering/op-sqlite', () => ({
           found.usage_count = params[7];
           found.updated_at = params[8];
         }
+        return { rows: [] };
+      }
+
+      if (q.startsWith('DELETE FROM ADDRESS_HISTORY WHERE NORMALIZED_ADDRESS = ?')) {
+        const norm = params[0];
+        mockStore.addressHistory = mockStore.addressHistory.filter((h) => h.normalized_address !== norm);
         return { rows: [] };
       }
 
@@ -171,6 +183,74 @@ describe('Ajuste Manual e Comparação de Pinos (AdjustPin)', () => {
     expect(updated[0].latitude).toBe(newLat);
     expect(updated[0].longitude).toBe(newLng);
     expect(updated[0].status).toBe('pending');
+  });
+
+  it('deve permitir retroceder/restaurar as coordenadas originais da planilha via restoreDeliveryOriginalCoords', () => {
+    const origLat = -22.9194;
+    const origLon = -42.8186;
+
+    // Insere com as coordenadas originais da planilha
+    const id = DatabaseService.insertDelivery({
+      listId: 1,
+      destination: 'Rua das Flores, 100',
+      bairro: 'Centro',
+      city: 'Maricá',
+      zipCode: '24900-000',
+      latitude: origLat,
+      longitude: origLon,
+      rawLatitude: String(origLat),
+      rawLongitude: String(origLon),
+      pedido: 'PED-123',
+      telefone: '21999999999',
+      status: 'pending',
+      ordem: 1,
+      distancia: null,
+      tempoEstimado: null,
+      createdAt: Date.now(),
+    });
+
+    // 1. O motorista ajusta o pino para um novo local
+    const adjustedLat = -22.9550;
+    const adjustedLon = -42.8550;
+    DatabaseService.updateDeliveryCoords(id, adjustedLat, adjustedLon);
+
+    let deliveries = DatabaseService.getAllDeliveries(1);
+    expect(deliveries[0].latitude).toBe(adjustedLat);
+    expect(deliveries[0].longitude).toBe(adjustedLon);
+
+    // 2. O motorista clica em "Retroceder / Restaurar Planilha"
+    const restored = DatabaseService.restoreDeliveryOriginalCoords(id);
+    expect(restored).not.toBeNull();
+    expect(restored?.latitude).toBe(origLat);
+    expect(restored?.longitude).toBe(origLon);
+
+    // 3. Verifica que no banco retornou para as coordenadas originais da planilha
+    deliveries = DatabaseService.getAllDeliveries(1);
+    expect(deliveries[0].latitude).toBe(origLat);
+    expect(deliveries[0].longitude).toBe(origLon);
+  });
+
+  it('deve remover entrada do histórico de endereços ao retroceder/desfazer ajuste', () => {
+    // Salva ajuste no histórico
+    DatabaseService.saveAddressHistory({
+      address: 'Rua das Palmeiras, 50',
+      bairro: 'Flamengo',
+      city: 'Maricá',
+      latitude: -22.9250,
+      longitude: -42.8250,
+      source: 'manual',
+    });
+
+    expect(DatabaseService.findAddressHistory({ address: 'Rua das Palmeiras, 50, Flamengo, Maricá' })).not.toBeNull();
+
+    // Remove do histórico ao retroceder
+    DatabaseService.removeAddressHistory({
+      address: 'Rua das Palmeiras, 50',
+      bairro: 'Flamengo',
+      city: 'Maricá',
+    });
+
+    expect(DatabaseService.findAddressHistory({ address: 'Rua das Palmeiras, 50, Flamengo, Maricá' })).toBeNull();
   });
 
   it('deve salvar e recuperar coordenadas no histórico permanente de endereços (address_history)', () => {

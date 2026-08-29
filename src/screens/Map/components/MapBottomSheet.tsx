@@ -92,7 +92,8 @@ export function MapBottomSheet({
   formatDistance,
   formatDuration,
 }: MapBottomSheetProps) {
-  const { colors } = useTheme();
+  const { colors, theme } = useTheme();
+  const isDark = theme === 'dark' || colors.background === '#0f172a';
   const styles = useMemo(() => createScreenStyles(colors), [colors]);
 
   const handleFinishRoute = useCallback(() => {
@@ -328,6 +329,46 @@ export function MapBottomSheet({
             accessibilityLabel="Menu de Ações Rápidas"
           >
             <SlidersHorizontal size={18} color={colors.primary} />
+          </Pressable>
+        </View>
+
+        {/* ── Action Buttons Bar (Otimizar Rota e Finalizar) ── */}
+        <View style={styles.sheetActionsBar}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.sheetOptBtn,
+              routeNeedsOptimization && styles.sheetOptBtnActive,
+              pressed && styles.btnPressed,
+            ]}
+            onPress={() => onOptimize(currentLocation ?? undefined)}
+            disabled={optimizing}
+            accessibilityLabel={routeNeedsOptimization ? 'Otimizar Rota' : 'Reotimizar Rota'}
+          >
+            {optimizing ? (
+              <ActivityIndicator size="small" color={isDark ? '#93C5FD' : '#FFFFFF'} />
+            ) : (
+              <>
+                <Zap
+                  size={15}
+                  color={isDark ? (routeNeedsOptimization ? '#C7D2FE' : '#93C5FD') : '#FFFFFF'}
+                  fill={isDark ? (routeNeedsOptimization ? '#C7D2FE' : '#93C5FD') : '#FFFFFF'}
+                />
+                <Text style={styles.sheetOptBtnText} numberOfLines={1}>
+                  {routeNeedsOptimization ? 'Otimizar Rota' : 'Reotimizar Rota'}
+                </Text>
+              </>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={({ pressed }) => [styles.sheetFinishBtn, pressed && styles.btnPressed]}
+            onPress={handleFinishRoute}
+            accessibilityLabel="Finalizar itinerário da rota"
+          >
+            <Check size={15} color={isDark ? '#6EE7B7' : '#FFFFFF'} strokeWidth={2.5} />
+            <Text style={styles.sheetFinishBtnText} numberOfLines={1}>
+              Finalizar Rota
+            </Text>
           </Pressable>
         </View>
 
