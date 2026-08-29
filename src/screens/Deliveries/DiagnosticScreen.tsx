@@ -228,7 +228,7 @@ export default function DiagnosticScreen({ navigation }: Props) {
                 label="Cota Utilizada Hoje:"
                 value={`${mapboxQuota.count} / ${mapboxQuota.limit} requisições`}
                 bold
-                color={mapboxQuota.isLimitReached ? colors.danger : colors.textPrimary}
+                color={mapboxQuota.isLimitReached ? colors.danger : colors.text}
               />
               <DiagItem
                 label="Cota Restante Hoje:"

@@ -1,3 +1,5 @@
+declare const process: any;
+
 import { MAPBOX_ACCESS_TOKEN as ENV_MAPBOX_TOKEN } from '@env';
 
 function getDynamicEnv(): Record<string, string | undefined> {

@@ -216,7 +216,7 @@ export default function MapScreen({ navigation }: Props) {
       )}
 
       {/* ── 3. Barra Flutuante de Otimizar / Finalizar ── */}
-      {!lassoMode && (
+      {!lassoMode && !activeStop && !showStopActionsModal && !showConfigModal && !showMenuModal && !showAddModal && !showListsModal && (
         <PersistentFloatingBar
           sheetTranslateY={sheetTranslateY}
           snapExpandedBottom={snapExpanded}

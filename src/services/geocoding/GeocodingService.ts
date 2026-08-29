@@ -258,10 +258,10 @@ export class GeocodingService {
       const geo = await GeocodingService.geocodeDelivery({
         address: row.destination || row.address || row.name || '',
         number: row.number,
-        neighborhood: row.bairro || row.neighborhood,
-        city: row.city,
-        state: row.state,
-        cep: row.zipCode || row.cep,
+        neighborhood: row.bairro || row.neighborhood || undefined,
+        city: row.city || '',
+        state: row.state || undefined,
+        cep: row.zipCode || row.cep || undefined,
       });
 
       if (!geo) return null;

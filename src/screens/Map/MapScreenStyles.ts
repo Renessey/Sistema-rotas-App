@@ -690,7 +690,8 @@ export const createScreenStyles = (colors: any) =>
     // ── Stop Modal Detail ──
     stopModalOverlay: {
       ...StyleSheet.absoluteFill,
-      zIndex: 50,
+      zIndex: 250,
+      elevation: 25,
       justifyContent: 'flex-end',
     },
     modalBackdrop: {
@@ -705,7 +706,9 @@ export const createScreenStyles = (colors: any) =>
       paddingTop: spacing.xs,
       gap: spacing.sm,
       maxHeight: '80%',
+      zIndex: 251,
       ...shadows.xl,
+      elevation: 30,
     },
     modalHeaderRow: {
       flexDirection: 'row',
