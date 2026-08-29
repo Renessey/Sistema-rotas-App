@@ -3,6 +3,7 @@ import { pick, keepLocalCopy, types } from '@react-native-documents/picker';
 import RNFS from 'react-native-fs';
 import type { ColumnMappingConfig, DeliveryEntity } from '../../types/geo';
 import { GeocodingService } from '../geocoding/GeocodingService';
+import { DatabaseService } from '../../storage/DatabaseService';
 import {
   parseCoordinatePair,
   detectStandardColumns,
@@ -269,10 +270,36 @@ export class ImportService {
       const rawLon = cols.longitudeCol ? row[cols.longitudeCol] : undefined;
 
       // 6. Conversão e validação exata
-      const coordResult = parseCoordinatePair(rawLat, rawLon);
+      let coordResult = parseCoordinatePair(rawLat, rawLon);
+
+      // 6.1 Consulta o histórico permanente de endereços memorizados (ajustados ou entregues)
+      const historyMatch = DatabaseService.findAddressHistory({
+        address: destination,
+        bairro,
+        city,
+        zipCode,
+      });
+
+      let historyNote: string | null = null;
+      if (historyMatch) {
+        // Se já existe no histórico, reaproveita a localização exata confirmada
+        coordResult = {
+          latitude: historyMatch.latitude,
+          longitude: historyMatch.longitude,
+          rawLatitude: String(historyMatch.latitude),
+          rawLongitude: String(historyMatch.longitude),
+          isValid: true,
+          isSuspicious: false,
+        };
+        historyNote = `📍 Posição recuperada do histórico (${historyMatch.source === 'manual' ? 'Pino ajustado' : 'Entrega confirmada'})`;
+      }
 
       if (rawLat === undefined || rawLon === undefined || rawLat === '' || rawLon === '') {
-        missingCoordsCount++;
+        if (historyMatch) {
+          validCoordsCount++;
+        } else {
+          missingCoordsCount++;
+        }
       } else if (coordResult.isValid) {
         validCoordsCount++;
         if (coordResult.isSuspicious) suspiciousCoordsCount++;
@@ -293,6 +320,10 @@ export class ImportService {
         ? cleanText(row[cols.notesCol])
         : null;
 
+      const finalNotes = historyNote
+        ? (notes ? `${historyNote} | ${notes}` : historyNote)
+        : (coordResult.errorReason ? `Aviso: ${coordResult.errorReason}${notes ? ' | ' + notes : ''}` : notes);
+
       return {
         destination: destination || `Entrega #${index + 1}`,
         bairro,
@@ -309,7 +340,7 @@ export class ImportService {
         distancia: null,
         tempoEstimado: null,
         failReason: coordResult.isValid ? null : 'wrong_address',
-        notes: coordResult.errorReason ? `Aviso: ${coordResult.errorReason}${notes ? ' | ' + notes : ''}` : notes,
+        notes: finalNotes,
         deliveredAt: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),

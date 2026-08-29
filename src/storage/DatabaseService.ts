@@ -1,5 +1,6 @@
 import { open, DB } from '@op-engineering/op-sqlite';
 import type { DeliveryEntity, DeliveryListEntity, DeliveryStatus, FailReason } from '../types/geo';
+import { getCanonicalAddressKey } from '../utils/addressParser';
 
 export class DatabaseService {
   private static db: DB | null = null;
@@ -50,6 +51,24 @@ export class DatabaseService {
         phone TEXT,
         orderCode TEXT,
         sequence INTEGER
+      );
+    `);
+
+    // 3. Tabela de Histórico Permanente de Pinos e Endereços Confirmados
+    this.db.executeSync(`
+      CREATE TABLE IF NOT EXISTS address_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        normalized_address TEXT UNIQUE NOT NULL,
+        raw_address TEXT NOT NULL,
+        bairro TEXT,
+        city TEXT,
+        zip_code TEXT,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        source TEXT DEFAULT 'manual',
+        usage_count INTEGER DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       );
     `);
 
@@ -563,5 +582,191 @@ export class DatabaseService {
     const db = this.getDb();
     const placeholders = ids.map(() => '?').join(',');
     db.executeSync(`DELETE FROM deliveries WHERE id IN (${placeholders});`, ids);
+  }
+
+  // ─── Histórico de Pinos e Endereços Memorizados ──────────────────────────
+
+  /**
+   * Salva ou atualiza a posição geográfica de um endereço no histórico permanente do dispositivo.
+   */
+  static saveAddressHistory(params: {
+    address: string;
+    bairro?: string | null;
+    city?: string | null;
+    zipCode?: string | null;
+    number?: string | null;
+    latitude: number;
+    longitude: number;
+    source?: 'manual' | 'completed' | 'import';
+  }): void {
+    if (!params.latitude || !params.longitude || isNaN(params.latitude) || isNaN(params.longitude)) return;
+    if (params.latitude === 0 && params.longitude === 0) return;
+
+    const db = this.getDb();
+    const normalized = getCanonicalAddressKey({
+      address: params.address,
+      bairro: params.bairro ?? undefined,
+      city: params.city ?? undefined,
+      zipCode: params.zipCode ?? undefined,
+      number: params.number ?? undefined,
+    });
+    if (!normalized || normalized.length < 3) return;
+
+    const now = Date.now();
+    const source = params.source ?? 'manual';
+
+    try {
+      const existing = db.executeSync(
+        'SELECT id, usage_count FROM address_history WHERE normalized_address = ?;',
+        [normalized],
+      );
+
+      if (existing.rows && existing.rows.length > 0) {
+        const row = existing.rows[0] as any;
+        const count = (row.usage_count ?? 1) + 1;
+        db.executeSync(
+          `UPDATE address_history SET
+            raw_address = ?,
+            bairro = COALESCE(?, bairro),
+            city = COALESCE(?, city),
+            zip_code = COALESCE(?, zip_code),
+            latitude = ?,
+            longitude = ?,
+            source = ?,
+            usage_count = ?,
+            updated_at = ?
+          WHERE normalized_address = ?;`,
+          [
+            params.address,
+            params.bairro ?? null,
+            params.city ?? null,
+            params.zipCode ?? null,
+            params.latitude,
+            params.longitude,
+            source,
+            count,
+            now,
+            normalized,
+          ],
+        );
+      } else {
+        db.executeSync(
+          `INSERT INTO address_history (
+            normalized_address, raw_address, bairro, city, zip_code,
+            latitude, longitude, source, usage_count, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?);`,
+          [
+            normalized,
+            params.address,
+            params.bairro ?? null,
+            params.city ?? null,
+            params.zipCode ?? null,
+            params.latitude,
+            params.longitude,
+            source,
+            now,
+            now,
+          ],
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  /**
+   * Consulta o histórico permanente de endereços para reaproveitar coordenadas já confirmadas ou ajustadas.
+   */
+  static findAddressHistory(params: {
+    address: string;
+    bairro?: string | null;
+    city?: string | null;
+    zipCode?: string | null;
+    number?: string | null;
+  }): {
+    latitude: number;
+    longitude: number;
+    source: string;
+    rawAddress: string;
+    usageCount: number;
+  } | null {
+    const db = this.getDb();
+    const normalized = getCanonicalAddressKey({
+      address: params.address,
+      bairro: params.bairro ?? undefined,
+      city: params.city ?? undefined,
+      zipCode: params.zipCode ?? undefined,
+      number: params.number ?? undefined,
+    });
+    if (!normalized) return null;
+
+    try {
+      const res = db.executeSync(
+        'SELECT * FROM address_history WHERE normalized_address = ? LIMIT 1;',
+        [normalized],
+      );
+
+      if (res.rows && res.rows.length > 0) {
+        const row = res.rows[0] as any;
+        return {
+          latitude: Number(row.latitude),
+          longitude: Number(row.longitude),
+          source: String(row.source ?? 'history'),
+          rawAddress: String(row.raw_address ?? ''),
+          usageCount: Number(row.usage_count ?? 1),
+        };
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
+  /**
+   * Retorna todo o histórico de endereços memorizados.
+   */
+  static getAllAddressHistory(): Array<{
+    id: number;
+    normalizedAddress: string;
+    rawAddress: string;
+    bairro: string | null;
+    city: string | null;
+    zipCode: string | null;
+    latitude: number;
+    longitude: number;
+    source: string;
+    usageCount: number;
+    updatedAt: number;
+  }> {
+    const db = this.getDb();
+    try {
+      const res = db.executeSync('SELECT * FROM address_history ORDER BY updated_at DESC;');
+      if (!res.rows) return [];
+      return (res.rows as any[]).map((r) => ({
+        id: r.id,
+        normalizedAddress: r.normalized_address,
+        rawAddress: r.raw_address,
+        bairro: r.bairro ?? null,
+        city: r.city ?? null,
+        zipCode: r.zip_code ?? null,
+        latitude: Number(r.latitude),
+        longitude: Number(r.longitude),
+        source: r.source ?? 'manual',
+        usageCount: Number(r.usage_count ?? 1),
+        updatedAt: Number(r.updated_at ?? 0),
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  static clearAddressHistory(): void {
+    const db = this.getDb();
+    try {
+      db.executeSync('DELETE FROM address_history;');
+    } catch {
+      // ignore
+    }
   }
 }

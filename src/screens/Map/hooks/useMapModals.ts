@@ -11,6 +11,8 @@ export function useMapModals() {
   const [showStopActionsModal, setShowStopActionsModal] = useState(false);
   const [selectedStopForActions, setSelectedStopForActions] = useState<RouteStop | null>(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showAdjustPinModal, setShowAdjustPinModal] = useState(false);
+  const [adjustingStop, setAdjustingStop] = useState<RouteStop | null>(null);
 
   const openStopActions = useCallback((stop: RouteStop) => {
     setSelectedStopForActions(stop);
@@ -20,6 +22,16 @@ export function useMapModals() {
   const closeStopActions = useCallback(() => {
     setShowStopActionsModal(false);
     setSelectedStopForActions(null);
+  }, []);
+
+  const openAdjustPin = useCallback((stop: RouteStop) => {
+    setAdjustingStop(stop);
+    setShowAdjustPinModal(true);
+  }, []);
+
+  const closeAdjustPin = useCallback(() => {
+    setShowAdjustPinModal(false);
+    setAdjustingStop(null);
   }, []);
 
   return {
@@ -43,5 +55,10 @@ export function useMapModals() {
     closeStopActions,
     showConfigModal,
     setShowConfigModal,
+    showAdjustPinModal,
+    setShowAdjustPinModal,
+    adjustingStop,
+    openAdjustPin,
+    closeAdjustPin,
   };
 }

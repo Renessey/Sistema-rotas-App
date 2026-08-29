@@ -5,7 +5,7 @@ import {
   Pressable,
   ScrollView,
 } from 'react-native';
-import { X, Navigation, MapPin, MessageSquare, Check } from 'lucide-react-native';
+import { X, Navigation, MapPin, MessageSquare, Check, Search } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NavigationLauncher } from '../../../services/navigation/NavigationLauncher';
 import { useTheme } from '../../../theme/ThemeContext';
@@ -17,6 +17,7 @@ interface StopDetailSheetProps {
   onClose: () => void;
   onComplete: (stop: RouteStop) => void;
   onSkip: (stop: RouteStop, reason?: FailReason) => void;
+  onOpenAdjustPin?: (stop: RouteStop) => void;
 }
 
 export function StopDetailSheet({
@@ -24,6 +25,7 @@ export function StopDetailSheet({
   onClose,
   onComplete,
   onSkip,
+  onOpenAdjustPin,
 }: StopDetailSheetProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -106,6 +108,15 @@ export function StopDetailSheet({
             <MapPin size={15} color={colors.primary} />
             <Text style={styles.modalActionBtnText}>Google Maps</Text>
           </Pressable>
+          {onOpenAdjustPin && (
+            <Pressable
+              style={[styles.modalActionBtn, { borderColor: colors.primary }]}
+              onPress={() => onOpenAdjustPin(activeStop)}
+            >
+              <Search size={15} color={colors.primary} />
+              <Text style={[styles.modalActionBtnText, { color: colors.primary }]}>Ajustar Pino</Text>
+            </Pressable>
+          )}
           {activeStop.deliveries[0]?.phone || activeStop.deliveries[0]?.telefone ? (
             <Pressable
               style={styles.modalActionBtn}

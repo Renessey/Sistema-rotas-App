@@ -5,3 +5,4 @@ export * from './LassoOverlay';
 export * from './PersistentFloatingBar';
 export * from './StopDetailSheet';
 export * from './StopTimelineRow';
+export * from './AdjustPinModal';

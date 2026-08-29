@@ -203,3 +203,32 @@ export function buildAddressQuery(
 
 export const buildGoogleGeocodingQuery = buildAddressQuery;
 
+/**
+ * Gera uma chave canônica padronizada para um endereço para indexação e histórico.
+ * Exemplo: "Rua Álvares de Castro, 346, Centro, Maricá - RJ" -> "ruaalvaresdecastro346centromarica"
+ */
+export function getCanonicalAddressKey(params: {
+  address?: string;
+  destination?: string;
+  bairro?: string;
+  neighborhood?: string;
+  city?: string;
+  zipCode?: string;
+  cep?: string;
+  number?: string;
+}): string {
+  const parts = [
+    params.address || params.destination || '',
+    params.number || '',
+    params.bairro || params.neighborhood || '',
+    params.city || '',
+  ].filter(Boolean).join(' ');
+
+  const clean = sanitizeAddress(parts);
+  const normalized = normalizeForSearch(clean)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  return normalized;
+}
+

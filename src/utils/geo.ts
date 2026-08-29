@@ -207,8 +207,8 @@ export function groupDeliveriesIntoStops(deliveries: import('../types/geo').Deli
   for (const [key, items] of groups.entries()) {
     const primary = items[0];
     const coords: LngLat = [
-      primary.snappedLongitude ?? primary.longitude ?? 0,
-      primary.snappedLatitude ?? primary.latitude ?? 0,
+      primary.longitude ?? primary.snappedLongitude ?? 0,
+      primary.latitude ?? primary.snappedLatitude ?? 0,
     ];
 
     const completedCount = items.filter((i) => i.status === 'completed').length;

@@ -314,6 +314,21 @@ export function useMapDeliveries({
     (stop: RouteStop) => {
       stop.deliveries.forEach((d) => {
         DatabaseService.updateDeliveryStatus(d.id, 'completed', { deliveredAt: Date.now() });
+        // Salva endereço e coordenadas confirmadas no histórico permanente do app
+        const addr = d.destination || d.address || stop.address;
+        const lat = d.latitude ?? stop.latitude;
+        const lng = d.longitude ?? stop.longitude;
+        if (addr && lat && lng && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+          DatabaseService.saveAddressHistory({
+            address: addr,
+            bairro: d.bairro || stop.bairro,
+            city: d.city || stop.city,
+            zipCode: d.zipCode,
+            latitude: lat,
+            longitude: lng,
+            source: 'completed',
+          });
+        }
       });
       const active = DatabaseService.getActiveList();
       const reloaded = DatabaseService.getAllDeliveries(active?.id);
@@ -350,6 +365,61 @@ export function useMapDeliveries({
       reloadDeliveries();
     },
     [reloadDeliveries],
+  );
+
+  const updateStopCoordinates = useCallback(
+    (stop: RouteStop, newLat: number, newLng: number) => {
+      // 1. Atualiza no SQLite e grava no histórico permanente de endereços
+      stop.deliveries.forEach((d) => {
+        DatabaseService.updateDeliveryCoords(d.id, newLat, newLng);
+        const addr = d.destination || d.address || stop.address;
+        if (addr) {
+          DatabaseService.saveAddressHistory({
+            address: addr,
+            bairro: d.bairro || stop.bairro,
+            city: d.city || stop.city,
+            zipCode: d.zipCode,
+            latitude: newLat,
+            longitude: newLng,
+            source: 'manual',
+          });
+        }
+      });
+
+      // 2. Atualiza imediatamente o estado de entregas na memória
+      const stopIds = new Set(stop.deliveries.map((d) => d.id));
+      setDeliveries((prev) =>
+        prev.map((d) =>
+          stopIds.has(d.id)
+            ? {
+                ...d,
+                latitude: newLat,
+                longitude: newLng,
+                rawLatitude: String(newLat),
+                rawLongitude: String(newLng),
+                snappedLatitude: undefined,
+                snappedLongitude: undefined,
+              }
+            : d,
+        ),
+      );
+
+      // 3. Recarrega do banco e recalcula o itinerário da rota
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+      setActiveStop(null);
+
+      // 4. Move a câmera suavemente para a nova posição do pino
+      cameraRef.current?.setStop({
+        center: [newLng, newLat],
+        zoom: 16,
+        duration: 500,
+      });
+
+      recalculateRoute();
+    },
+    [cameraRef, recalculateRoute],
   );
 
   const clearAllDeliveries = useCallback(() => {
@@ -397,6 +467,7 @@ export function useMapDeliveries({
     completeStop,
     skipStop,
     deleteStop,
+    updateStopCoordinates,
     clearAllDeliveries,
   };
 }

@@ -29,6 +29,7 @@ import {
   LassoOverlay,
   PersistentFloatingBar,
   StopDetailSheet,
+  AdjustPinModal,
 } from './components';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
@@ -102,6 +103,7 @@ export default function MapScreen({ navigation }: Props) {
     completeStop,
     skipStop,
     deleteStop,
+    updateStopCoordinates,
     clearAllDeliveries,
   } = useMapDeliveries({
     cameraRef,
@@ -174,6 +176,10 @@ export default function MapScreen({ navigation }: Props) {
     openStopActions,
     showConfigModal,
     setShowConfigModal,
+    showAdjustPinModal,
+    adjustingStop,
+    openAdjustPin,
+    closeAdjustPin,
   } = useMapModals();
 
   return (
@@ -216,7 +222,7 @@ export default function MapScreen({ navigation }: Props) {
       )}
 
       {/* ── 3. Barra Flutuante de Otimizar / Finalizar ── */}
-      {!lassoMode && !activeStop && !showStopActionsModal && !showConfigModal && !showMenuModal && !showAddModal && !showListsModal && (
+      {!lassoMode && !activeStop && !showStopActionsModal && !showConfigModal && !showMenuModal && !showAddModal && !showListsModal && !showAdjustPinModal && (
         <PersistentFloatingBar
           sheetTranslateY={sheetTranslateY}
           snapExpandedBottom={snapExpanded}
@@ -305,10 +311,20 @@ export default function MapScreen({ navigation }: Props) {
           onClose={() => setActiveStop(null)}
           onComplete={completeStop}
           onSkip={skipStop}
+          onOpenAdjustPin={openAdjustPin}
         />
       )}
 
-      {/* ── 7. Modais e Overlay de Carregamento ── */}
+      {/* ── 7. Modal Comparativo e Ajuste de Pino ── */}
+      <AdjustPinModal
+        visible={showAdjustPinModal}
+        stop={adjustingStop}
+        currentStyleUrl={currentStyleUrl}
+        onClose={closeAdjustPin}
+        onSave={updateStopCoordinates}
+      />
+
+      {/* ── 8. Modais e Overlay de Carregamento ── */}
       <MapModalsContainer
         styles={styles}
         navigation={navigation}

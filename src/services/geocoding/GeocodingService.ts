@@ -202,7 +202,25 @@ export class GeocodingService {
       cep: cep ?? undefined,
     });
 
-    // 0. Cache
+    // 0. Verifica histórico permanente de pinos ajustados/confirmados (0ms, offline)
+    const hist = DatabaseService.findAddressHistory({
+      address: rawAddress,
+      number: row.number,
+      bairro: row.neighborhood,
+      city: row.city,
+      zipCode: row.cep,
+    });
+    if (hist) {
+      return {
+        latitude: hist.latitude,
+        longitude: hist.longitude,
+        confidence: 'high',
+        provider: `history_${hist.source}`,
+        formattedAddress: hist.rawAddress || rawAddress,
+      };
+    }
+
+    // 0.1 Cache em memória e SQLite
     const cached = GeocodingService.checkCache(cacheKey);
     if (cached) return cached;
 
@@ -284,6 +302,23 @@ export class GeocodingService {
       provider: snapped.matched ? `${provider}+mapbox_snap` : provider,
       formattedAddress,
     };
+  }
+
+  /**
+   * Geocodifica uma string de busca direta usando o histórico local e o Mapbox Places API.
+   */
+  static async geocodeQuery(query: string): Promise<GeocodeResult | null> {
+    const hist = DatabaseService.findAddressHistory({ address: query });
+    if (hist) {
+      return {
+        latitude: hist.latitude,
+        longitude: hist.longitude,
+        confidence: 'high',
+        provider: `history_${hist.source}`,
+        formattedAddress: hist.rawAddress || query,
+      };
+    }
+    return this.mapboxGeocode(query);
   }
 
   static clearCache(): void {
