@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -30,6 +30,7 @@ import {
   StopDetailSheet,
   AdjustPinModal,
   NextStopHUD,
+  OfflineAreaSelectorOverlay,
 } from './components';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
@@ -70,6 +71,8 @@ export default function MapScreen({ navigation }: Props) {
     setShowFuelHUD,
     fuelConfig,
     setFuelConfig,
+    isOfflineMode,
+    updateOfflineMode,
   } = useMapPreferences();
 
   // 3. Entregas, Paradas, Otimização e Rotas
@@ -184,7 +187,16 @@ export default function MapScreen({ navigation }: Props) {
     adjustingStop,
     openAdjustPin,
     closeAdjustPin,
+    showOfflineModal,
+    setShowOfflineModal,
   } = useMapModals();
+
+  // 7. Seletor Manual de Área Offline sobre o Mapa
+  const [showOfflineSelector, setShowOfflineSelector] = useState(false);
+  const [pendingOfflineDownload, setPendingOfflineDownload] = useState<{
+    name: string;
+    bounds: [number, number, number, number];
+  } | null>(null);
 
   // Distância efetiva da rota (turn-by-turn do Mapbox ou aproximada entre paradas)
   const effectiveRouteDistanceM = useMemo(() => {
@@ -202,6 +214,29 @@ export default function MapScreen({ navigation }: Props) {
     }
     return 0;
   }, [routeInfo, routeStops]);
+
+  // Bounding-box atual derivada das paradas carregadas (usada pelo OfflineModal)
+  const currentMapBounds = useMemo<[number, number, number, number] | undefined>(() => {
+    const located = routeStops.filter((s) => s.latitude && s.longitude);
+    if (located.length === 0) {
+      // Fallback: usa localização atual ±0.05 graus (~5km)
+      if (currentLocation) {
+        const lng = currentLocation[0];
+        const lat = currentLocation[1];
+        return [lng - 0.05, lat - 0.05, lng + 0.05, lat + 0.05];
+      }
+      return undefined;
+    }
+    const lats = located.map((s) => s.latitude!);
+    const lngs = located.map((s) => s.longitude!);
+    const pad = 0.01;
+    return [
+      Math.min(...lngs) - pad,
+      Math.min(...lats) - pad,
+      Math.max(...lngs) + pad,
+      Math.max(...lats) + pad,
+    ];
+  }, [routeStops, currentLocation]);
 
   return (
     <View style={styles.container}>
@@ -243,7 +278,7 @@ export default function MapScreen({ navigation }: Props) {
       )}
 
       {/* ── 2.1 Next Stop Quick HUD ── */}
-      {!lassoMode && nextStop && (
+      {!lassoMode && !showOfflineSelector && nextStop && (
         <NextStopHUD
           nextStop={nextStop}
           sheetTranslateY={sheetTranslateY}
@@ -255,51 +290,76 @@ export default function MapScreen({ navigation }: Props) {
         />
       )}
 
-      {/* ── 3. Controles Flutuantes da Direita ── */}
-      <Animated.View
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            opacity: sheetTranslateY.interpolate({
-              inputRange: [transExpanded, transHalf, transCollapsed],
-              outputRange: [0, 0.2, 1],
-              extrapolate: 'clamp',
-            }),
-            transform: [
-              {
-                translateX: sheetTranslateY.interpolate({
-                  inputRange: [transExpanded, transHalf, transCollapsed],
-                  outputRange: [70, 30, 0],
-                  extrapolate: 'clamp',
-                }),
-              },
-            ],
-          },
-        ]}
-        pointerEvents={sheetState === 'expanded' ? 'none' : 'box-none'}
-      >
-        <FloatingMapControls
-          followGPS={followGPS}
-          hasRoute={!!route || routeStops.length > 0}
-          lassoMode={lassoMode}
-          diagStatus={diagStatus}
-          onOpenLayers={() => setShowLayersModal(true)}
-          onFitBounds={fitRoute}
-          onToggleFollowGPS={() => {
-            const next = !followGPS;
-            setFollowGPS(next);
+      {/* ── 2.2 Seletor Manual de Área Offline sobre o Mapa ── */}
+      {showOfflineSelector && (
+        <OfflineAreaSelectorOverlay
+          visible={showOfflineSelector}
+          mapRef={mapRef}
+          currentLocation={currentLocation}
+          onCenterUser={() => {
             if (currentLocation) {
-              centerOnUser(15);
+              centerOnUser(14);
             }
           }}
-          onToggleLasso={handleToggleLasso}
-          showFuelHUD={showFuelHUD}
-          onCloseFuelHUD={() => setShowFuelHUD(false)}
-          fuelConfig={fuelConfig}
-          routeDistanceM={effectiveRouteDistanceM}
-          onPressFuelMetrics={() => setShowConfigModal(true)}
+          onCancel={() => {
+            setShowOfflineSelector(false);
+            setShowOfflineModal(true);
+          }}
+          onConfirmArea={(name, bounds) => {
+            setPendingOfflineDownload({ name, bounds });
+            setShowOfflineSelector(false);
+            setShowOfflineModal(true);
+          }}
         />
-      </Animated.View>
+      )}
+
+      {/* ── 3. Controles Flutuantes da Direita ── */}
+      {!showOfflineSelector && (
+        <Animated.View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              opacity: sheetTranslateY.interpolate({
+                inputRange: [transExpanded, transHalf, transCollapsed],
+                outputRange: [0, 0.2, 1],
+                extrapolate: 'clamp',
+              }),
+              transform: [
+                {
+                  translateX: sheetTranslateY.interpolate({
+                    inputRange: [transExpanded, transHalf, transCollapsed],
+                    outputRange: [70, 30, 0],
+                    extrapolate: 'clamp',
+                  }),
+                },
+              ],
+            },
+          ]}
+          pointerEvents={sheetState === 'expanded' ? 'none' : 'box-none'}
+        >
+          <FloatingMapControls
+            followGPS={followGPS}
+            hasRoute={!!route || routeStops.length > 0}
+            lassoMode={lassoMode}
+            diagStatus={diagStatus}
+            onOpenLayers={() => setShowLayersModal(true)}
+            onFitBounds={fitRoute}
+            onToggleFollowGPS={() => {
+              const next = !followGPS;
+              setFollowGPS(next);
+              if (currentLocation) {
+                centerOnUser(15);
+              }
+            }}
+            onToggleLasso={handleToggleLasso}
+            showFuelHUD={showFuelHUD}
+            onCloseFuelHUD={() => setShowFuelHUD(false)}
+            fuelConfig={fuelConfig}
+            routeDistanceM={effectiveRouteDistanceM}
+            onPressFuelMetrics={() => setShowConfigModal(true)}
+          />
+        </Animated.View>
+      )}
 
       {/* ── 5. Gaveta Inferior (Bottom Sheet) ── */}
       <MapBottomSheet
@@ -403,6 +463,18 @@ export default function MapScreen({ navigation }: Props) {
         onMoveStopToEnd={moveStopToEnd}
         onClearAllDeliveries={clearAllDeliveries}
         optimizing={optimizing}
+        showOfflineModal={showOfflineModal}
+        setShowOfflineModal={setShowOfflineModal}
+        currentStyleUrl={currentStyleUrl}
+        currentMapBounds={currentMapBounds}
+        onRequestSelectAreaOnMap={() => {
+          setShowOfflineModal(false);
+          setShowOfflineSelector(true);
+        }}
+        pendingDownload={pendingOfflineDownload}
+        onClearPendingDownload={() => setPendingOfflineDownload(null)}
+        isOfflineMode={isOfflineMode}
+        onToggleOfflineMode={updateOfflineMode}
       />
     </View>
   );

@@ -60,12 +60,41 @@ export const MAP_THEMES: { id: MapTheme; label: string; icon: string; descriptio
   },
 ];
 
-function getSafeToken(): string {
+export function getSafeToken(): string {
   try {
     return getMapboxAccessToken();
   } catch {
     return MAPBOX_ACCESS_TOKEN || '';
   }
+}
+
+export function getMapboxStyleHttpsUrl(mapType: MapType = 'standard', mapTheme: MapTheme = 'classic'): string {
+  const token = getSafeToken();
+  let styleId = 'navigation-day-v1';
+
+  if (mapType === 'satellite') {
+    styleId = 'satellite-streets-v12';
+  } else if (mapType === 'terrain') {
+    styleId = 'outdoors-v12';
+  } else {
+    switch (mapTheme) {
+      case 'dark':
+        styleId = 'navigation-night-v1';
+        break;
+      case 'minimal':
+        styleId = 'light-v11';
+        break;
+      case 'apple':
+        styleId = 'streets-v12';
+        break;
+      case 'classic':
+      default:
+        styleId = 'navigation-day-v1';
+        break;
+    }
+  }
+
+  return `https://api.mapbox.com/styles/v1/mapbox/${styleId}?access_token=${token}`;
 }
 
 /**

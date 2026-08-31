@@ -7,3 +7,4 @@ export * from './StopDetailSheet';
 export * from './StopTimelineRow';
 export * from './AdjustPinModal';
 export * from './NextStopHUD';
+export * from './OfflineAreaSelectorOverlay';

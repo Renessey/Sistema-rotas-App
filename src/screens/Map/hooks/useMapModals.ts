@@ -13,6 +13,7 @@ export function useMapModals() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [showAdjustPinModal, setShowAdjustPinModal] = useState(false);
   const [adjustingStop, setAdjustingStop] = useState<RouteStop | null>(null);
+  const [showOfflineModal, setShowOfflineModal] = useState(false);
 
   const openStopActions = useCallback((stop: RouteStop) => {
     setSelectedStopForActions(stop);
@@ -60,5 +61,7 @@ export function useMapModals() {
     adjustingStop,
     openAdjustPin,
     closeAdjustPin,
+    showOfflineModal,
+    setShowOfflineModal,
   };
 }

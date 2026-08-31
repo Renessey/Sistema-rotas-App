@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  WifiOff,
 } from 'lucide-react-native';
 
 interface SideMenuModalProps {
@@ -34,6 +35,7 @@ interface SideMenuModalProps {
   onSettingsPress: () => void;
   onDiagnosticPress?: () => void;
   onListsPress?: () => void;
+  onOfflinePress?: () => void;
   onClearRoutePress: () => void;
   totalDeliveriesCount: number;
 }
@@ -51,6 +53,7 @@ export function SideMenuModal({
   onSettingsPress,
   onDiagnosticPress,
   onListsPress,
+  onOfflinePress,
   onClearRoutePress,
   totalDeliveriesCount,
 }: SideMenuModalProps) {
@@ -213,6 +216,26 @@ export function SideMenuModal({
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
+
+            {/* Offline */}
+            {onOfflinePress && (
+              <Pressable
+                style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+                onPress={() => {
+                  onClose();
+                  onOfflinePress();
+                }}
+              >
+                <View style={[styles.itemIconWrap, { backgroundColor: '#DBEAFE' }]}>
+                  <WifiOff size={18} color="#1D4ED8" />
+                </View>
+                <View style={styles.itemTextWrap}>
+                  <Text style={styles.itemTitle}>Offline</Text>
+                  <Text style={styles.itemSub}>Baixar mapa para usar sem internet</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textDisabled} />
+              </Pressable>
+            )}
 
             {/* Ajustes */}
             <Pressable

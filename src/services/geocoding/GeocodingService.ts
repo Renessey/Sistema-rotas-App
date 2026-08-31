@@ -40,6 +40,15 @@ interface MapboxGeocodeApiResponse {
  */
 export class GeocodingService {
   private static memCache = new Map<string, GeocodeResult>();
+  private static forceOffline = false;
+
+  static setForceOffline(offline: boolean) {
+    GeocodingService.forceOffline = offline;
+  }
+
+  static isForcedOffline(): boolean {
+    return GeocodingService.forceOffline;
+  }
 
   /** Retorna o cacheKey canônico para um endereço */
   private static key(params: {
@@ -104,8 +113,9 @@ export class GeocodingService {
       return {
         latitude: row.latitude,
         longitude: row.longitude,
-        confidence: 'high',
+        confidence: 'exact',
         provider: 'spreadsheet',
+        formattedAddress: row.destination,
       };
     }
     return null;
@@ -116,7 +126,7 @@ export class GeocodingService {
    * Endpoint: https://api.mapbox.com/geocoding/v5/mapbox.places/{query}.json
    */
   static async mapboxGeocode(query: string): Promise<GeocodeResult | null> {
-    if (!query || query.trim().length === 0) return null;
+    if (GeocodingService.forceOffline || !query || query.trim().length < 3) return null;
 
     const canRequest = await MapboxQuota.canMakeRequest();
     if (!canRequest) {

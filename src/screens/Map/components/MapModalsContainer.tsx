@@ -8,6 +8,7 @@ import { QuickActionsMenuModal } from '../../../components/Map/QuickActionsMenuM
 import { QuickRgModal } from '../../../components/Map/QuickRgModal';
 import { StopActionsModal } from '../../../components/Map/StopActionsModal';
 import { DeliveryListsModal } from '../../../components/Deliveries/DeliveryListsModal';
+import { OfflineModal } from '../../../components/Map/OfflineModal';
 import type { MapType, MapTheme } from '../../../config/mapStyles';
 import type { Costing, RouteStop, LngLat } from '../../../types/geo';
 
@@ -60,6 +61,19 @@ interface MapModalsContainerProps {
   onMoveStopToEnd?: (stop: RouteStop) => void;
   onClearAllDeliveries: () => void;
   optimizing: boolean;
+  // Offline Maps
+  showOfflineModal: boolean;
+  setShowOfflineModal: (show: boolean) => void;
+  currentStyleUrl: string;
+  currentMapBounds?: [number, number, number, number];
+  onRequestSelectAreaOnMap?: () => void;
+  pendingDownload?: {
+    name: string;
+    bounds: [number, number, number, number];
+  } | null;
+  onClearPendingDownload?: () => void;
+  isOfflineMode?: boolean;
+  onToggleOfflineMode?: (offline: boolean) => void;
 }
 
 export function MapModalsContainer({
@@ -106,6 +120,15 @@ export function MapModalsContainer({
   onMoveStopToEnd,
   onClearAllDeliveries,
   optimizing,
+  showOfflineModal,
+  setShowOfflineModal,
+  currentStyleUrl,
+  currentMapBounds,
+  onRequestSelectAreaOnMap,
+  pendingDownload,
+  onClearPendingDownload,
+  isOfflineMode,
+  onToggleOfflineMode,
 }: MapModalsContainerProps) {
   return (
     <>
@@ -144,6 +167,7 @@ export function MapModalsContainer({
         onSettingsPress={() => navigation.navigate('Settings')}
         onDiagnosticPress={() => navigation.navigate('Diagnostic')}
         onListsPress={() => setShowListsModal(true)}
+        onOfflinePress={() => setShowOfflineModal(true)}
         onClearRoutePress={() => {
           Alert.alert(
             'Limpar Rota',
@@ -239,6 +263,19 @@ export function MapModalsContainer({
         visible={showListsModal}
         onClose={() => setShowListsModal(false)}
         onListChanged={onReloadDeliveries}
+      />
+
+      {/* ── Offline Maps Modal ── */}
+      <OfflineModal
+        visible={showOfflineModal}
+        onClose={() => setShowOfflineModal(false)}
+        currentStyleUrl={currentStyleUrl}
+        currentMapBounds={currentMapBounds}
+        onRequestSelectAreaOnMap={onRequestSelectAreaOnMap}
+        pendingDownload={pendingDownload}
+        onClearPendingDownload={onClearPendingDownload}
+        isOfflineMode={isOfflineMode}
+        onToggleOfflineMode={onToggleOfflineMode}
       />
 
       {/* ── Loading Overlay ── */}

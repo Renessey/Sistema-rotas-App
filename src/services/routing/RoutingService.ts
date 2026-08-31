@@ -25,8 +25,18 @@ const SPEED_CONFIG: Record<Costing, number> = {
  * Garante que 100% das rotas, matrizes de otimização e alinhamentos viários utilizem unicamente o Mapbox.
  */
 export class RoutingService {
+  private static forceOffline = false;
+
+  static setForceOffline(offline: boolean) {
+    RoutingService.forceOffline = offline;
+  }
+
+  static isForcedOffline(): boolean {
+    return RoutingService.forceOffline;
+  }
+
   /**
-   * Calcula rota completa entre todos os waypoints via Mapbox Directions API v5.
+   * Calcula rota completa entre todos os waypoints via Mapbox Directions API v5 (ou motor local se offline).
    * waypoints[0] DEVE ser a posição GPS atual do usuário para ancoragem first-mile.
    */
   static async route(
@@ -39,15 +49,8 @@ export class RoutingService {
 
     const costing = options.costing ?? 'auto';
 
-    console.log(
-      '[RoutingService] Calculando rota exclusiva via Mapbox Directions API v5 | pontos:',
-      waypoints.length,
-      '| partida GPS:',
-      waypoints[0],
-    );
-
-    // 1. Executa exclusivamente via Mapbox Directions API v5
-    if (MapboxService.isConfigured()) {
+    // 1. Se NÃO estiver em modo offline forçado, tenta Mapbox Directions API v5
+    if (!RoutingService.forceOffline && MapboxService.isConfigured()) {
       try {
         const mapboxResult = await MapboxService.route(waypoints, {
           costing,
@@ -147,7 +150,7 @@ export class RoutingService {
   ): Promise<MatrixResult> {
     const costing = options.costing ?? 'auto';
 
-    if (MapboxService.isConfigured() && origins.length + destinations.length <= 25) {
+    if (!RoutingService.forceOffline && MapboxService.isConfigured() && origins.length + destinations.length <= 25) {
       try {
         const mapboxMatrix = await MapboxService.matrix(origins, destinations, { costing });
         if (mapboxMatrix) {

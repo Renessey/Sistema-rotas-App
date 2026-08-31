@@ -2,15 +2,20 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MapStyleService } from '../../../services/map/MapStyleService';
 import { MapType, MapTheme, getMapStyleUrl } from '../../../config/mapStyles';
+import { OFFLINE_STYLE_URL } from '../../../services/OfflineMapService';
+import { RoutingService } from '../../../services/routing/RoutingService';
+import { GeocodingService } from '../../../services/geocoding/GeocodingService';
 import type { Costing } from '../../../types/geo';
 
 const FUEL_STORAGE_KEY = '@rotasimples:fuel_config';
+const OFFLINE_MODE_STORAGE_KEY = '@rotasimples:offline_mode_active';
 
 export function useMapPreferences() {
   const [mapType, setMapType] = useState<MapType>('standard');
   const [mapTheme, setMapTheme] = useState<MapTheme>('classic');
   const [hideCompleted, setHideCompleted] = useState(false);
   const [costingMode, setCostingMode] = useState<Costing>('auto');
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   // Fuel HUD
   const [showFuelHUD, setShowFuelHUD] = useState(true);
@@ -25,6 +30,16 @@ export function useMapPreferences() {
       setCostingMode(prefs.costingMode);
 
       try {
+        const rawOffline = await AsyncStorage.getItem(OFFLINE_MODE_STORAGE_KEY);
+        if (rawOffline !== null) {
+          const active = JSON.parse(rawOffline);
+          setIsOfflineMode(active);
+          RoutingService.setForceOffline(active);
+          GeocodingService.setForceOffline(active);
+        }
+      } catch {}
+
+      try {
         const rawFuel = await AsyncStorage.getItem(FUEL_STORAGE_KEY);
         if (rawFuel) {
           const parsed = JSON.parse(rawFuel);
@@ -34,6 +49,15 @@ export function useMapPreferences() {
         }
       } catch {}
     })();
+  }, []);
+
+  const updateOfflineMode = useCallback(async (active: boolean) => {
+    setIsOfflineMode(active);
+    RoutingService.setForceOffline(active);
+    GeocodingService.setForceOffline(active);
+    try {
+      await AsyncStorage.setItem(OFFLINE_MODE_STORAGE_KEY, JSON.stringify(active));
+    } catch {}
   }, []);
 
   const updateMapType = useCallback(async (type: MapType) => {
@@ -56,10 +80,12 @@ export function useMapPreferences() {
     await MapStyleService.setCostingMode(mode);
   }, []);
 
-  const currentStyleUrl = useMemo(
-    () => getMapStyleUrl(mapType, mapTheme),
-    [mapType, mapTheme],
-  );
+  const currentStyleUrl = useMemo(() => {
+    if (isOfflineMode) {
+      return OFFLINE_STYLE_URL;
+    }
+    return getMapStyleUrl(mapType, mapTheme);
+  }, [isOfflineMode, mapType, mapTheme]);
 
   return {
     mapType,
@@ -75,5 +101,7 @@ export function useMapPreferences() {
     setShowFuelHUD,
     fuelConfig,
     setFuelConfig,
+    isOfflineMode,
+    updateOfflineMode,
   };
 }
