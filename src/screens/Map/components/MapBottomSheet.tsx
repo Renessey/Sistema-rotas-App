@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   Info,
   ChevronRight,
+  AlertTriangle,
 } from 'lucide-react-native';
 import { useTheme } from '../../../theme/ThemeContext';
 import { createScreenStyles } from '../MapScreenStyles';
@@ -45,6 +46,7 @@ interface MapBottomSheetProps {
   stopTimes: string[];
   totalStopsCount: number;
   totalPackagesCount: number;
+  unlocatedCount?: number;
   routeInfo: { distance: number; duration: number } | null;
   optimizing: boolean;
   routeNeedsOptimization: boolean;
@@ -58,6 +60,7 @@ interface MapBottomSheetProps {
   onCenterGps: () => void;
   onAddStop: () => void;
   onNavigateImport: () => void;
+  onNavigateDeliveries?: () => void;
   /** Formatters */
   formatDistance: (m: number) => string;
   formatDuration: (s: number) => string;
@@ -77,6 +80,7 @@ export function MapBottomSheet({
   stopTimes,
   totalStopsCount,
   totalPackagesCount,
+  unlocatedCount = 0,
   routeInfo,
   optimizing,
   routeNeedsOptimization,
@@ -89,6 +93,7 @@ export function MapBottomSheet({
   onCenterGps,
   onAddStop,
   onNavigateImport,
+  onNavigateDeliveries,
   formatDistance,
   formatDuration,
 }: MapBottomSheetProps) {
@@ -251,6 +256,46 @@ export function MapBottomSheet({
             <Info size={14} color={colors.primary} />
           </Pressable>
         </View>
+
+        {/* Aviso de Paradas sem Coordenadas */}
+        {unlocatedCount > 0 && (
+          <Pressable
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              backgroundColor: colors.warningGhost,
+              borderRadius: 12,
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderWidth: 1,
+              borderColor: colors.warning + '44',
+              marginBottom: 8,
+              gap: 8,
+            }}
+            onPress={() => {
+              Alert.alert(
+                'Entregas sem Localização Exata',
+                `Existem ${unlocatedCount} entrega(s) nesta lista sem coordenadas GPS confirmadas. Deseja conferir na lista completa de entregas?`,
+                [
+                  { text: 'Cancelar', style: 'cancel' },
+                  {
+                    text: 'Ver na Lista',
+                    onPress: () => onNavigateDeliveries?.(),
+                  },
+                ],
+              );
+            }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+              <AlertTriangle size={15} color={colors.warning} />
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.text, flex: 1 }}>
+                {unlocatedCount} {unlocatedCount === 1 ? 'entrega sem coordenada exata' : 'entregas sem coordenadas exatas'}
+              </Text>
+            </View>
+            <ChevronRight size={15} color={colors.textSecondary} />
+          </Pressable>
+        )}
       </View>
     );
   }, [
@@ -259,11 +304,13 @@ export function MapBottomSheet({
     optimizing,
     totalStopsCount,
     totalPackagesCount,
+    unlocatedCount,
     colors,
     styles,
     onCenterGps,
     onOptimize,
     onAddStop,
+    onNavigateDeliveries,
   ]);
 
   return (

@@ -16,6 +16,8 @@ import {
   Edit2,
   Trash2,
   X,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react-native';
 import type { RouteStop } from '../../types/geo';
 
@@ -28,6 +30,8 @@ export interface StopActionsModalProps {
   onAddStop?: () => void;
   onEditStop?: () => void;
   onRemoveStop?: () => void;
+  onMoveToTop?: () => void;
+  onMoveToEnd?: () => void;
 }
 
 export function StopActionsModal({
@@ -39,6 +43,8 @@ export function StopActionsModal({
   onAddStop,
   onEditStop,
   onRemoveStop,
+  onMoveToTop,
+  onMoveToEnd,
 }: StopActionsModalProps) {
   const insets = useSafeAreaInsets();
   const scaleAnim = React.useRef(new Animated.Value(0.9)).current;
@@ -61,6 +67,28 @@ export function StopActionsModal({
   if (!visible || !stop) return null;
 
   const items = [
+    {
+      id: 'move_to_top',
+      title: 'MOVER PARA O TOPO (PRÓXIMA PARADA)',
+      icon: ArrowUp,
+      iconColor: '#38BDF8',
+      textColor: '#FFFFFF',
+      onPress: () => {
+        onClose();
+        onMoveToTop?.();
+      },
+    },
+    {
+      id: 'move_to_end',
+      title: 'MOVER PARA O FIM DA ROTA',
+      icon: ArrowDown,
+      iconColor: '#FBBF24',
+      textColor: '#FFFFFF',
+      onPress: () => {
+        onClose();
+        onMoveToEnd?.();
+      },
+    },
     {
       id: 'mark_packages',
       title: 'MARCAR PACOTES',

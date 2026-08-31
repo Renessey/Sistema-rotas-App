@@ -49,6 +49,11 @@ export function useMapDeliveries({
     [deliveries],
   );
 
+  const unlocatedCount = useMemo(
+    () => deliveries.filter((d) => d.latitude === null || d.longitude === null || d.status === 'invalid_coords').length,
+    [deliveries],
+  );
+
   const orderedDeliveries = useMemo(() => {
     if (order.length > 0) {
       return order.map((idx) => locatedDeliveries[idx]).filter(Boolean);
@@ -311,9 +316,17 @@ export function useMapDeliveries({
   );
 
   const completeStop = useCallback(
-    (stop: RouteStop) => {
+    (stop: RouteStop, receiverNote?: string) => {
       stop.deliveries.forEach((d) => {
-        DatabaseService.updateDeliveryStatus(d.id, 'completed', { deliveredAt: Date.now() });
+        const finalNotes = receiverNote
+          ? d.notes
+            ? `${d.notes} | Recebedor: ${receiverNote}`
+            : `Recebedor: ${receiverNote}`
+          : undefined;
+        DatabaseService.updateDeliveryStatus(d.id, 'completed', {
+          deliveredAt: Date.now(),
+          notes: finalNotes,
+        });
         // Salva endereço e coordenadas confirmadas no histórico permanente do app
         const addr = d.destination || d.address || stop.address;
         const lat = d.latitude ?? stop.latitude;
@@ -462,6 +475,48 @@ export function useMapDeliveries({
     [cameraRef, recalculateRoute],
   );
 
+  const moveStopToTop = useCallback(
+    (stop: RouteStop) => {
+      const completedStops = routeStops.filter((s) => s.status === 'completed');
+      const pendingStops = routeStops.filter((s) => s.status !== 'completed' && s.key !== stop.key);
+      const newOrder = [...completedStops, stop, ...pendingStops];
+
+      let seq = 1;
+      newOrder.forEach((st) => {
+        st.deliveries.forEach((d) => {
+          DatabaseService.updateDeliverySequence(d.id, seq++);
+        });
+      });
+
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+      recalculateRoute();
+    },
+    [routeStops, recalculateRoute],
+  );
+
+  const moveStopToEnd = useCallback(
+    (stop: RouteStop) => {
+      const completedStops = routeStops.filter((s) => s.status === 'completed');
+      const pendingStops = routeStops.filter((s) => s.status !== 'completed' && s.key !== stop.key);
+      const newOrder = [...completedStops, ...pendingStops, stop];
+
+      let seq = 1;
+      newOrder.forEach((st) => {
+        st.deliveries.forEach((d) => {
+          DatabaseService.updateDeliverySequence(d.id, seq++);
+        });
+      });
+
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+      recalculateRoute();
+    },
+    [routeStops, recalculateRoute],
+  );
+
   const clearAllDeliveries = useCallback(() => {
     DatabaseService.clearDeliveries();
     setDeliveries([]);
@@ -499,6 +554,7 @@ export function useMapDeliveries({
     stopTimes,
     totalStopsCount,
     totalPackagesCount,
+    unlocatedCount,
     reloadDeliveries,
     fitRoute,
     optimizeRoute,
@@ -509,6 +565,8 @@ export function useMapDeliveries({
     deleteStop,
     updateStopCoordinates,
     revertStopCoordinates,
+    moveStopToTop,
+    moveStopToEnd,
     clearAllDeliveries,
   };
 }

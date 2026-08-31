@@ -4,8 +4,8 @@ import { Animated, Dimensions, PanResponder } from 'react-native';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // ─── Bottom Sheet Snap Points ────────────────────────────────────────────────
-export const SNAP_EXPANDED = SCREEN_HEIGHT * 0.88;
-export const SNAP_HALF = SCREEN_HEIGHT * 0.54;
+export const SNAP_EXPANDED = Math.round(SCREEN_HEIGHT * 0.94);
+export const SNAP_HALF = Math.round(SCREEN_HEIGHT * 0.58);
 export const SNAP_COLLAPSED = 105;
 
 export const TRANS_EXPANDED = 0;

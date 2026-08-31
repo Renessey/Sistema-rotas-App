@@ -66,7 +66,7 @@ export function ConfigModal({
   const [currentRg, setCurrentRg] = useState(generateRandomRg());
   const [useFormattedRg, setUseFormattedRg] = useState(true);
   const [rgCopied, setRgCopied] = useState(false);
-  const [fuelConfig, setFuelConfig] = useState<FuelConfig>({ kmPerLiter: '', pricePerLiter: '' });
+  const [fuelConfig, setFuelConfig] = useState<FuelConfig>({ kmPerLiter: '10.0', pricePerLiter: '5.89' });
   const scaleAnim = React.useRef(new Animated.Value(0.88)).current;
   const opacityAnim = React.useRef(new Animated.Value(0)).current;
 
@@ -83,7 +83,11 @@ export function ConfigModal({
       AsyncStorage.getItem(FUEL_STORAGE_KEY).then((val) => {
         if (val) {
           try {
-            setFuelConfig(JSON.parse(val));
+            const parsed = JSON.parse(val);
+            setFuelConfig({
+              kmPerLiter: parsed.kmPerLiter ? String(parsed.kmPerLiter) : '10.0',
+              pricePerLiter: parsed.pricePerLiter ? String(parsed.pricePerLiter) : '5.89',
+            });
           } catch {}
         }
       });
@@ -328,7 +332,7 @@ export function ConfigModal({
                 disabled={kmL <= 0}
               >
                 <Check size={16} color="#FFFFFF" />
-                <Text style={styles.primaryBtnText}>Confirmar e Exibir HUD</Text>
+                <Text style={styles.primaryBtnText}>Salvar e Exibir no Mapa</Text>
               </Pressable>
             </View>
           </View>

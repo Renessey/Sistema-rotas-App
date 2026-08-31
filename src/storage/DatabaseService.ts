@@ -101,6 +101,19 @@ export class DatabaseService {
     addCol('createdAt', 'INTEGER');
     addCol('updatedAt', 'INTEGER');
     addCol('originalData', 'TEXT');
+
+    // Índices de alta performance para SQLite
+    try {
+      this.db!.executeSync(`
+        CREATE INDEX IF NOT EXISTS idx_deliveries_listId ON deliveries(listId);
+        CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
+        CREATE INDEX IF NOT EXISTS idx_deliveries_ordem ON deliveries(ordem);
+        CREATE INDEX IF NOT EXISTS idx_deliveries_seq ON deliveries(sequence);
+        CREATE INDEX IF NOT EXISTS idx_address_history_norm ON address_history(normalized_address);
+      `);
+    } catch {
+      // ignore
+    }
   }
 
   static getDb(): DB {

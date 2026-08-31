@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Animated,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { radius, shadows, spacing, typography } from '../../theme';
 import { Fuel, ChevronUp, ChevronDown, X, Clock, Route, Droplets } from 'lucide-react-native';
@@ -27,6 +28,7 @@ export function FuelHUDCard({
   durationRemainingS,
   onClose,
 }: FuelHUDCardProps) {
+  const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = React.useMemo(() => createStyles(colors), [colors]);
   const [minimized, setMinimized] = useState(false);
@@ -63,7 +65,13 @@ export function FuelHUDCard({
 
   return (
     <Animated.View
-      style={[styles.hud, { transform: [{ translateY: slideAnim }] }]}
+      style={[
+        styles.hud,
+        {
+          top: Math.max(insets.top, 12) + 8,
+          transform: [{ translateY: slideAnim }],
+        },
+      ]}
       pointerEvents="box-none"
     >
       {/* Header row */}

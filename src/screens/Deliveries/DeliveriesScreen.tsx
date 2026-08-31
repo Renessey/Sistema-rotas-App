@@ -21,6 +21,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { NavigationLauncher } from '../../services/navigation/NavigationLauncher';
 import { AddDeliveryModal } from '../../components/AddDeliveryModal';
 import { DeliveryListsModal } from '../../components/Deliveries/DeliveryListsModal';
+import { shareDeliveryReport } from '../../utils/reportExport';
 import type { DeliveryListEntity } from '../../types/geo';
 import {
   Package,
@@ -40,6 +41,7 @@ import {
   Layers,
   HelpCircle,
   ChevronDown,
+  Share2,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Deliveries'>;
@@ -172,6 +174,15 @@ export default function DeliveriesScreen({ navigation }: Props) {
         </View>
 
         <View style={styles.headerRightRow}>
+          <Pressable
+            style={[styles.headerAddBtn, { backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border }]}
+            onPress={() => shareDeliveryReport(activeList?.name || 'Lista de Entregas', all)}
+            hitSlop={6}
+          >
+            <Share2 size={14} color={colors.primary} />
+            <Text style={[styles.headerAddBtnText, { color: colors.primary }]}>Relatório</Text>
+          </Pressable>
+
           <Pressable style={styles.headerAddBtn} onPress={() => setShowAddModal(true)}>
             <Plus size={15} color="#FFFFFF" />
             <Text style={styles.headerAddBtnText}>Parada</Text>

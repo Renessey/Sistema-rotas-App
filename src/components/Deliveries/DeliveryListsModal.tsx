@@ -13,6 +13,7 @@ import type { DeliveryListEntity } from '../../types/geo';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
+import { shareDeliveryReport } from '../../utils/reportExport';
 import {
   X,
   FolderOpen,
@@ -22,6 +23,7 @@ import {
   Pencil,
   Trash2,
   Calendar,
+  Share2,
 } from 'lucide-react-native';
 
 interface DeliveryListsModalProps {
@@ -253,6 +255,20 @@ export function DeliveryListsModal({
                           <Text style={styles.loadedNoticeText}>Em exibição</Text>
                         </View>
                       )}
+
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.actionIconBtn,
+                          pressed && styles.btnPressed,
+                        ]}
+                        onPress={() => {
+                          const dels = DatabaseService.getAllDeliveries(list.id);
+                          shareDeliveryReport(list.name, dels);
+                        }}
+                        hitSlop={6}
+                      >
+                        <Share2 size={15} color={colors.primary} />
+                      </Pressable>
 
                       <Pressable
                         style={({ pressed }) => [

@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MapStyleService } from '../../../services/map/MapStyleService';
 import { MapType, MapTheme, getMapStyleUrl } from '../../../config/mapStyles';
 import type { Costing } from '../../../types/geo';
+
+const FUEL_STORAGE_KEY = '@rotasimples:fuel_config';
 
 export function useMapPreferences() {
   const [mapType, setMapType] = useState<MapType>('standard');
@@ -10,8 +13,8 @@ export function useMapPreferences() {
   const [costingMode, setCostingMode] = useState<Costing>('auto');
 
   // Fuel HUD
-  const [showFuelHUD, setShowFuelHUD] = useState(false);
-  const [fuelConfig, setFuelConfig] = useState({ kmPerLiter: 0, pricePerLiter: 0 });
+  const [showFuelHUD, setShowFuelHUD] = useState(true);
+  const [fuelConfig, setFuelConfig] = useState({ kmPerLiter: 10, pricePerLiter: 5.89 });
 
   useEffect(() => {
     (async () => {
@@ -20,6 +23,16 @@ export function useMapPreferences() {
       setMapTheme(prefs.mapTheme);
       setHideCompleted(prefs.hideCompleted);
       setCostingMode(prefs.costingMode);
+
+      try {
+        const rawFuel = await AsyncStorage.getItem(FUEL_STORAGE_KEY);
+        if (rawFuel) {
+          const parsed = JSON.parse(rawFuel);
+          const kmL = parseFloat(String(parsed.kmPerLiter).replace(',', '.')) || 10;
+          const priceL = parseFloat(String(parsed.pricePerLiter).replace(',', '.')) || 5.89;
+          setFuelConfig({ kmPerLiter: kmL, pricePerLiter: priceL });
+        }
+      } catch {}
     })();
   }, []);
 

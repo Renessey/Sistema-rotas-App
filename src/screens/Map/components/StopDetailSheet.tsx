@@ -1,21 +1,24 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   Pressable,
   ScrollView,
+  TextInput,
 } from 'react-native';
-import { X, Navigation, MapPin, MessageSquare, Check, Search } from 'lucide-react-native';
+import { X, Navigation, MapPin, MessageSquare, Check, Search, UserCheck } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NavigationLauncher } from '../../../services/navigation/NavigationLauncher';
 import { useTheme } from '../../../theme/ThemeContext';
 import { createScreenStyles } from '../MapScreenStyles';
 import type { RouteStop, FailReason } from '../../../types/geo';
 
+const RECEIVER_CHIPS = ['Próprio', 'Portaria', 'Vizinho', 'Familiar'];
+
 interface StopDetailSheetProps {
   activeStop: RouteStop;
   onClose: () => void;
-  onComplete: (stop: RouteStop) => void;
+  onComplete: (stop: RouteStop, receiver?: string) => void;
   onSkip: (stop: RouteStop, reason?: FailReason) => void;
   onOpenAdjustPin?: (stop: RouteStop) => void;
 }
@@ -30,6 +33,7 @@ export function StopDetailSheet({
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const styles = React.useMemo(() => createScreenStyles(colors), [colors]);
+  const [selectedReceiver, setSelectedReceiver] = useState('');
 
   return (
     <View style={styles.stopModalOverlay}>
@@ -79,6 +83,45 @@ export function StopDetailSheet({
             </View>
           ))}
         </ScrollView>
+
+        {/* Receiver Quick Selector (Optional) */}
+        <View style={{ gap: 6, marginTop: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+            <UserCheck size={13} color={colors.textMuted} />
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.textMuted }}>
+              Quem recebeu? (Opcional):
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+            {RECEIVER_CHIPS.map((chip) => {
+              const isSel = selectedReceiver === chip;
+              return (
+                <Pressable
+                  key={chip}
+                  style={{
+                    backgroundColor: isSel ? colors.primary : colors.surfaceElevated,
+                    paddingHorizontal: 10,
+                    paddingVertical: 4,
+                    borderRadius: 14,
+                    borderWidth: 1,
+                    borderColor: isSel ? colors.primary : colors.border,
+                  }}
+                  onPress={() => setSelectedReceiver(isSel ? '' : chip)}
+                >
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      fontWeight: '700',
+                      color: isSel ? '#FFFFFF' : colors.textSecondary,
+                    }}
+                  >
+                    {chip}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
 
         {/* Quick action buttons */}
         <View style={styles.modalActionsRow}>
@@ -139,7 +182,7 @@ export function StopDetailSheet({
         <View style={styles.modalStatusRow}>
           <Pressable
             style={[styles.modalStatusBtn, { backgroundColor: colors.success }]}
-            onPress={() => onComplete(activeStop)}
+            onPress={() => onComplete(activeStop, selectedReceiver || undefined)}
           >
             <Check size={16} color="#FFFFFF" />
             <Text style={styles.modalStatusBtnText}>

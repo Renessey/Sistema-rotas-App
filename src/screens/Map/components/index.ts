@@ -6,3 +6,4 @@ export * from './PersistentFloatingBar';
 export * from './StopDetailSheet';
 export * from './StopTimelineRow';
 export * from './AdjustPinModal';
+export * from './NextStopHUD';

@@ -29,6 +29,7 @@ import {
   LassoOverlay,
   StopDetailSheet,
   AdjustPinModal,
+  NextStopHUD,
 } from './components';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
@@ -39,7 +40,7 @@ export default function MapScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const cameraRef = useRef<CameraRef>(null);
-  const mapRef = useRef<MapRef | null>(null);
+  const mapRef = useRef<MapRef | null>(null); 
 
   // 1. Gerenciamento de GPS & Localização
   const {
@@ -94,6 +95,7 @@ export default function MapScreen({ navigation }: Props) {
     stopTimes,
     totalStopsCount,
     totalPackagesCount,
+    unlocatedCount,
     reloadDeliveries,
     fitRoute,
     optimizeRoute,
@@ -104,6 +106,8 @@ export default function MapScreen({ navigation }: Props) {
     deleteStop,
     updateStopCoordinates,
     revertStopCoordinates,
+    moveStopToTop,
+    moveStopToEnd,
     clearAllDeliveries,
   } = useMapDeliveries({
     cameraRef,
@@ -182,6 +186,23 @@ export default function MapScreen({ navigation }: Props) {
     closeAdjustPin,
   } = useMapModals();
 
+  // Distância efetiva da rota (turn-by-turn do Mapbox ou aproximada entre paradas)
+  const effectiveRouteDistanceM = useMemo(() => {
+    if (routeInfo?.distance && routeInfo.distance > 0) return routeInfo.distance;
+    if (routeStops.length >= 2) {
+      let total = 0;
+      for (let i = 0; i < routeStops.length - 1; i++) {
+        const p1 = routeStops[i];
+        const p2 = routeStops[i + 1];
+        const dx = (p2.longitude - p1.longitude) * 111320 * Math.cos((p1.latitude * Math.PI) / 180);
+        const dy = (p2.latitude - p1.latitude) * 110540;
+        total += Math.sqrt(dx * dx + dy * dy);
+      }
+      return total * 1.35; // Fator de malha viária
+    }
+    return 0;
+  }, [routeInfo, routeStops]);
+
   return (
     <View style={styles.container}>
       {/* ── 1. Background MapLibre Canvas ── */}
@@ -221,6 +242,19 @@ export default function MapScreen({ navigation }: Props) {
         />
       )}
 
+      {/* ── 2.1 Next Stop Quick HUD ── */}
+      {!lassoMode && nextStop && (
+        <NextStopHUD
+          nextStop={nextStop}
+          sheetTranslateY={sheetTranslateY}
+          transExpanded={transExpanded}
+          transHalf={transHalf}
+          transCollapsed={transCollapsed}
+          onSelectStop={selectStop}
+          onCompleteStop={completeStop}
+        />
+      )}
+
       {/* ── 3. Controles Flutuantes da Direita ── */}
       <Animated.View
         style={[
@@ -246,7 +280,7 @@ export default function MapScreen({ navigation }: Props) {
       >
         <FloatingMapControls
           followGPS={followGPS}
-          hasRoute={!!route}
+          hasRoute={!!route || routeStops.length > 0}
           lassoMode={lassoMode}
           diagStatus={diagStatus}
           onOpenLayers={() => setShowLayersModal(true)}
@@ -259,6 +293,11 @@ export default function MapScreen({ navigation }: Props) {
             }
           }}
           onToggleLasso={handleToggleLasso}
+          showFuelHUD={showFuelHUD}
+          onCloseFuelHUD={() => setShowFuelHUD(false)}
+          fuelConfig={fuelConfig}
+          routeDistanceM={effectiveRouteDistanceM}
+          onPressFuelMetrics={() => setShowConfigModal(true)}
         />
       </Animated.View>
 
@@ -277,6 +316,7 @@ export default function MapScreen({ navigation }: Props) {
         stopTimes={stopTimes}
         totalStopsCount={totalStopsCount}
         totalPackagesCount={totalPackagesCount}
+        unlocatedCount={unlocatedCount}
         routeInfo={routeInfo}
         optimizing={optimizing}
         routeNeedsOptimization={routeNeedsOptimization}
@@ -289,6 +329,7 @@ export default function MapScreen({ navigation }: Props) {
         onCenterGps={() => centerOnUser(16)}
         onAddStop={() => setShowAddModal(true)}
         onNavigateImport={() => navigation.navigate('Import')}
+        onNavigateDeliveries={() => navigation.navigate('Deliveries')}
         formatDistance={formatDistance}
         formatDuration={formatDuration}
       />
@@ -358,6 +399,8 @@ export default function MapScreen({ navigation }: Props) {
         onFitRoute={fitRoute}
         onReloadDeliveries={reloadDeliveries}
         onDeleteStop={deleteStop}
+        onMoveStopToTop={moveStopToTop}
+        onMoveStopToEnd={moveStopToEnd}
         onClearAllDeliveries={clearAllDeliveries}
         optimizing={optimizing}
       />

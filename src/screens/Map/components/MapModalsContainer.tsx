@@ -8,7 +8,6 @@ import { QuickActionsMenuModal } from '../../../components/Map/QuickActionsMenuM
 import { QuickRgModal } from '../../../components/Map/QuickRgModal';
 import { StopActionsModal } from '../../../components/Map/StopActionsModal';
 import { DeliveryListsModal } from '../../../components/Deliveries/DeliveryListsModal';
-import { FuelHUDCard } from '../../../components/Map/FuelHUDCard';
 import type { MapType, MapTheme } from '../../../config/mapStyles';
 import type { Costing, RouteStop, LngLat } from '../../../types/geo';
 
@@ -57,6 +56,8 @@ interface MapModalsContainerProps {
   onFitRoute: () => void;
   onReloadDeliveries: () => void;
   onDeleteStop: (stop: RouteStop) => void;
+  onMoveStopToTop?: (stop: RouteStop) => void;
+  onMoveStopToEnd?: (stop: RouteStop) => void;
   onClearAllDeliveries: () => void;
   optimizing: boolean;
 }
@@ -101,21 +102,13 @@ export function MapModalsContainer({
   onFitRoute,
   onReloadDeliveries,
   onDeleteStop,
+  onMoveStopToTop,
+  onMoveStopToEnd,
   onClearAllDeliveries,
   optimizing,
 }: MapModalsContainerProps) {
   return (
     <>
-      {/* ── Fuel HUD Card ── */}
-      <FuelHUDCard
-        visible={showFuelHUD}
-        kmPerLiter={fuelConfig.kmPerLiter}
-        pricePerLiter={fuelConfig.pricePerLiter}
-        distanceRemainingM={routeInfo?.distance ?? 0}
-        durationRemainingS={routeInfo?.duration ?? 0}
-        onClose={() => setShowFuelHUD(false)}
-      />
-
       {/* ── Map Layers Modal ── */}
       <MapDisplayModal
         visible={showLayersModal}
@@ -205,6 +198,16 @@ export function MapModalsContainer({
         onClose={() => {
           setShowStopActionsModal(false);
           setSelectedStopForActions(null);
+        }}
+        onMoveToTop={() => {
+          if (selectedStopForActions && onMoveStopToTop) {
+            onMoveStopToTop(selectedStopForActions);
+          }
+        }}
+        onMoveToEnd={() => {
+          if (selectedStopForActions && onMoveStopToEnd) {
+            onMoveStopToEnd(selectedStopForActions);
+          }
         }}
         onMarkPackages={() => Alert.alert('Marcar Pacotes', 'Pacotes marcados como conferidos.')}
         onGenerateDoc={() => {
