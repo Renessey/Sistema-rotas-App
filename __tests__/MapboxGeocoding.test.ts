@@ -46,7 +46,7 @@ describe('MapboxGeocoding API (100% Mapbox)', () => {
     if (result) {
       expect(result.latitude).toBeDefined();
       expect(result.longitude).toBeDefined();
-      expect(result.provider).toBe('mapbox');
+      expect(['osm_photon', 'mapbox', 'cache']).toContain(result.provider);
       expect(typeof result.latitude).toBe('number');
       expect(typeof result.longitude).toBe('number');
     }

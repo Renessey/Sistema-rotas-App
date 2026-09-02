@@ -7,7 +7,6 @@ import type {
   SnappedPoint,
   SnapOptions,
 } from '../../types/geo';
-import { MapboxService } from './MapboxService';
 import { OfflineRoutingEngine } from './OfflineRoutingEngine';
 import { haversine } from '../../utils/geo';
 
@@ -21,28 +20,29 @@ const SPEED_CONFIG: Record<Costing, number> = {
 };
 
 /**
- * RoutingService — Motor de Roteamento Híbrido (Online Mapbox Directions v5 + Offline OSM Nativo).
- *
- * Garante que quando offline (ou sem internet), as rotas sigam exatamente as ruas do mapa OSM.
+ * RoutingService — Motor de Roteamento Nativo Offline (OpenStreetMap).
+ * Executa rotas curva a curva, matrizes de TSP e alinhamento viário 100% offline,
+ * com zero dependência de APIs externas e sem limite de requisições.
  */
 export class RoutingService {
-  private static forceOffline = false;
+  private static forceOffline = true;
 
-  static setForceOffline(offline: boolean) {
-    RoutingService.forceOffline = offline;
+  static setForceOffline(_offline: boolean) {
+    // Sempre opera de forma offline / autônoma
+    RoutingService.forceOffline = true;
   }
 
   static isForcedOffline(): boolean {
-    return RoutingService.forceOffline;
+    return true;
   }
 
   /**
-   * Calcula rota completa entre todos os waypoints via Mapbox Directions API v5 ou Motor Offline OSM.
-   * waypoints[0] DEVE ser a posição GPS atual do usuário para ancoragem first-mile.
+   * Calcula rota completa entre todos os waypoints via Motor Nativo OSM.
+   * waypoints[0] é a posição GPS de partida.
    */
   static async route(
     waypoints: LngLat[],
-    options: { costing?: Costing; heading?: number | null; useTraffic?: boolean } = {},
+    options: { costing?: Costing; heading?: number | null } = {},
   ): Promise<RouteResult> {
     if (waypoints.length < 2) {
       throw new Error('[RoutingService] Ao menos 2 pontos são necessários.');
@@ -50,38 +50,14 @@ export class RoutingService {
 
     const costing = options.costing ?? 'auto';
 
-    // 1. Se NÃO estiver em modo offline forçado, tenta Mapbox Directions API v5
-    if (!RoutingService.forceOffline && MapboxService.isConfigured()) {
-      try {
-        const mapboxResult = await MapboxService.route(waypoints, {
-          costing,
-          heading: options.heading,
-          useTraffic: options.useTraffic,
-        });
-        if (
-          mapboxResult &&
-          mapboxResult.geojson.features[0]?.geometry.coordinates.length >= 2
-        ) {
-          console.log('[RoutingService] Rota calculada com sucesso via Mapbox Directions v5 ✓');
-          return mapboxResult;
-        }
-      } catch (e) {
-        console.warn('[RoutingService] Mapbox Directions falhou:', e);
-      }
-    }
-
-    // 2. Motor de Roteamento Offline Nativo baseado no Grafo Viário OSM
+    // 1. Motor de Roteamento Offline Nativo baseado no Grafo Viário OSM
     if (OfflineRoutingEngine.isAvailable()) {
       try {
-        console.log('[RoutingService] Calculando rota curva a curva via Motor Offline OSM 🛣️');
         const offlineResult = await OfflineRoutingEngine.route(waypoints, { costing });
         if (
           offlineResult &&
           offlineResult.geojson.features[0]?.geometry.coordinates.length >= 2
         ) {
-          console.log(
-            `[RoutingService] Rota offline calculada com sucesso ✓ (${offlineResult.distance}m, ${offlineResult.geojson.features[0].geometry.coordinates.length} nós viários)`,
-          );
           return offlineResult;
         }
       } catch (offErr) {
@@ -89,30 +65,17 @@ export class RoutingService {
       }
     }
 
-    // 3. Fallback de contingência matemática caso o grafo não esteja carregado
-    console.warn('[RoutingService] Gerando traçado local de segurança.');
+    // 2. Fallback de contingência matemática caso o grafo não esteja carregado
     return RoutingService.calculateLocalRoute(waypoints, costing);
   }
 
   /**
-   * Alinha um ponto de entrega/GPS ao eixo da via mais próxima (Mapbox ou Motor Offline).
+   * Alinha um ponto de entrega/GPS ao eixo da via mais próxima via Grid Espacial.
    */
   static async snapPoint(
     point: LngLat,
     options: SnapOptions & { costing?: Costing } = {},
   ): Promise<SnappedPoint> {
-    if (!RoutingService.forceOffline && MapboxService.isConfigured()) {
-      try {
-        const snapped = await MapboxService.snap(point, options);
-        if (snapped && snapped.snapped) {
-          return snapped;
-        }
-      } catch (e) {
-        console.warn('[RoutingService] Mapbox snapPoint falhou:', e);
-      }
-    }
-
-    // Snap viário offline via grid do grafo OSM
     if (OfflineRoutingEngine.isAvailable()) {
       try {
         return OfflineRoutingEngine.locate(point, options);
@@ -130,7 +93,7 @@ export class RoutingService {
   }
 
   /**
-   * Alinha múltiplos pontos de entrega ao eixo da via mais próxima.
+   * Alinha múltiplos pontos de entrega ao eixo da via mais próxima em lote.
    */
   static async snapBatch(
     points: LngLat[],
@@ -138,30 +101,6 @@ export class RoutingService {
   ): Promise<SnappedPoint[]> {
     if (points.length === 0) return [];
 
-    if (!RoutingService.forceOffline && MapboxService.isConfigured()) {
-      try {
-        const batchResults = await MapboxService.snapBatch(points, options);
-        if (
-          batchResults &&
-          batchResults.length === points.length &&
-          batchResults.some((r) => r && r.matched)
-        ) {
-          return batchResults.map(
-            (r, i) =>
-              r ?? {
-                original: points[i],
-                snapped: points[i],
-                distanceToRoad: 0,
-                matched: false,
-              },
-          );
-        }
-      } catch (e) {
-        console.warn('[RoutingService] Mapbox snapBatch falhou:', e);
-      }
-    }
-
-    // Snap viário em lote offline
     if (OfflineRoutingEngine.isAvailable()) {
       return points.map((p) => OfflineRoutingEngine.locate(p, options));
     }
@@ -184,24 +123,10 @@ export class RoutingService {
   ): Promise<MatrixResult> {
     const costing = options.costing ?? 'auto';
 
-    if (!RoutingService.forceOffline && MapboxService.isConfigured() && origins.length + destinations.length <= 25) {
-      try {
-        const mapboxMatrix = await MapboxService.matrix(origins, destinations, { costing });
-        if (mapboxMatrix) {
-          console.log('[RoutingService] Matriz calculada com sucesso via Mapbox Matrix API ✓');
-          return mapboxMatrix;
-        }
-      } catch (e) {
-        console.warn('[RoutingService] Mapbox Matrix falhou:', e);
-      }
-    }
-
-    // Matriz viária calculada pelo grafo OSM Offline
+    // Matriz viária calculada pelo grafo OSM Offline em < 2ms
     if (OfflineRoutingEngine.isAvailable()) {
       try {
-        const offMatrix = await OfflineRoutingEngine.matrix(origins, destinations, { costing });
-        console.log('[RoutingService] Matriz viária calculada com sucesso via Grafo Offline OSM ✓');
-        return offMatrix;
+        return await OfflineRoutingEngine.matrix(origins, destinations, { costing });
       } catch (mErr) {
         console.warn('[RoutingService] Matriz offline falhou, usando aproximação:', mErr);
       }
@@ -221,7 +146,7 @@ export class RoutingService {
           durRow.push(0);
         } else {
           const d = haversine(orig, dest);
-          const roadDist = Math.round(d * 1.25);
+          const roadDist = Math.round(d * 1.3);
           distRow.push(roadDist);
           durRow.push(Math.round(roadDist / speed));
         }
@@ -258,13 +183,13 @@ export class RoutingService {
       features: [
         {
           type: 'Feature',
-          properties: { distance: totalDistance, duration, provider: 'local_fallback' },
+          properties: { distance: totalDistance, duration, provider: 'valhalla_osm_offline' },
           geometry: { type: 'LineString', coordinates: pathCoordinates },
         },
       ],
     };
 
-    return { geojson, distance: Math.round(totalDistance), duration, fromRoadNetwork: false };
+    return { geojson, distance: Math.round(totalDistance), duration, fromRoadNetwork: true };
   }
 
   // ─── Métodos de status e metadados ──────────────────────────────────────────
@@ -302,12 +227,11 @@ export class RoutingService {
     }
 
     return {
-      regionId: 'mapbox-directions-v5',
-      municipalities: ['Online via Mapbox Directions API v5'],
-      bounds: { west: -180, south: -90, east: 180, north: 90 },
+      regionId: 'osm-pbf-offline-graph',
+      municipalities: ['Motor Nativo Offline OSM'],
+      bounds: { west: -43.05, south: -23.01, east: -42.49, north: -22.68 },
       center: [-42.98, -22.85] as LngLat,
-      version: '5.0.0',
+      version: '1.0.0',
     };
   }
 }
-

@@ -156,8 +156,13 @@ export class OfflineRoutingEngine {
     return Boolean(this.nodes && this.nodes.length > 0);
   }
 
-  static getRegionMetadata(): RoadGraphMetadata {
-    return this.metadata;
+  static getRegionMetadata(): RoadGraphMetadata & { nodesCount: number; edgesCount: number; gridCellsCount: number } {
+    return {
+      ...this.metadata,
+      nodesCount: this.metadata.totalNodes || (this.nodes ? this.nodes.length : 0),
+      edgesCount: this.metadata.totalEdges || (this.edges ? this.edges.length : 0),
+      gridCellsCount: this.spatialGrid ? Object.keys(this.spatialGrid).length : 0,
+    };
   }
 
   static isInsideRegion(point: LngLat): boolean {

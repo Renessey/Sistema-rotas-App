@@ -367,20 +367,18 @@ function HomeScreen({
   onClose,
   onDownload,
   onDelete,
-  isOfflineMode,
-  onToggleOfflineMode,
 }: HomeScreenProps) {
   return (
     <>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={[styles.iconBadge, { backgroundColor: isOfflineMode ? '#F59E0B' : '#1D4ED8' }]}>
+          <View style={[styles.iconBadge, { backgroundColor: '#F59E0B' }]}>
             <WifiOff size={18} color="#FFFFFF" />
           </View>
           <View>
-            <Text style={styles.title}>Mapas & Modo Offline</Text>
-            <Text style={styles.subtitle}>Gerencie o uso offline do aplicativo</Text>
+            <Text style={styles.title}>Mapas & Regiões Offline</Text>
+            <Text style={styles.subtitle}>Gerencie os dados e mapas locais do app</Text>
           </View>
         </View>
         <Pressable style={styles.closeBtn} onPress={onClose} hitSlop={8}>
@@ -388,77 +386,64 @@ function HomeScreen({
         </Pressable>
       </View>
 
-      {/* ── Seletor de Modo: Online vs 100% Offline ── */}
-      <View style={styles.modeCard}>
-        <View style={styles.modeCardHeader}>
-          <View style={[styles.modeStatusDot, { backgroundColor: isOfflineMode ? '#F59E0B' : '#10B981' }]} />
-          <Text style={styles.modeCardTitle}>
-            {isOfflineMode ? 'MODO 100% OFFLINE ATIVADO' : 'MODO ONLINE (MAPBOX)'}
+      <ScrollView
+        style={styles.homeScroll}
+        contentContainerStyle={styles.homeScrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Status do Motor 100% Offline */}
+        <View style={styles.offlineStatusBanner}>
+          <View style={styles.offlineStatusHeader}>
+            <View style={styles.statusDotActive} />
+            <Text style={styles.offlineStatusTitle}>SISTEMA 100% OFFLINE ATIVO</Text>
+          </View>
+          <Text style={styles.offlineStatusDesc}>
+            O aplicativo opera com motor de rotas nativo embarcado, sem consumir internet e sem custos de API.
           </Text>
         </View>
 
-        <Text style={styles.modeCardDesc}>
-          {isOfflineMode
-            ? 'Mapas locais, importação local e cálculo de rotas operam 100% no aparelho sem usar dados móveis.'
-            : 'Rotas em tempo real, trânsito ao vivo e mapas conectados à nuvem Mapbox.'}
-        </Text>
-
-        <View style={styles.modeToggleRow}>
-          <Pressable
-            style={[styles.modeToggleBtn, !isOfflineMode && styles.modeToggleBtnActive]}
-            onPress={() => onToggleOfflineMode?.(false)}
-          >
-            <Text style={[styles.modeToggleBtnText, !isOfflineMode && styles.modeToggleBtnTextActive]}>
-              🌐 Online
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.modeToggleBtn, isOfflineMode && styles.modeToggleBtnActiveOffline]}
-            onPress={() => onToggleOfflineMode?.(true)}
-          >
-            <Text style={[styles.modeToggleBtnText, isOfflineMode && styles.modeToggleBtnTextActiveOffline]}>
-              📡 100% Offline
-            </Text>
-          </Pressable>
+        {/* Espaço em disco e Botão Baixar */}
+        <View style={styles.diskRow}>
+          <HardDrive size={14} color={colors.textMuted} strokeWidth={2} />
+          <Text style={styles.diskText}>
+            Armazenamento usado: <Text style={styles.diskValue}>{formatBytes(totalUsed)}</Text>
+          </Text>
         </View>
-      </View>
 
-      {/* Espaço em disco */}
-      <View style={styles.diskRow}>
-        <HardDrive size={14} color={colors.textMuted} strokeWidth={2} />
-        <Text style={styles.diskText}>
-          Armazenamento usado: <Text style={styles.diskValue}>{formatBytes(totalUsed)}</Text>
-        </Text>
-      </View>
+        {/* Botão principal de baixar área */}
+        <Pressable
+          style={({ pressed }) => [styles.downloadBtn, pressed && styles.btnPressed]}
+          onPress={onDownload}
+        >
+          <Download size={18} color="#FFFFFF" strokeWidth={2.2} />
+          <Text style={styles.downloadBtnText}>Baixar Nova Área no Mapa</Text>
+        </Pressable>
 
-      {/* Botão principal de baixar área */}
-      <Pressable
-        style={({ pressed }) => [styles.downloadBtn, pressed && styles.btnPressed]}
-        onPress={onDownload}
-      >
-        <Download size={18} color="#FFFFFF" strokeWidth={2.2} />
-        <Text style={styles.downloadBtnText}>Baixar Nova Área no Mapa</Text>
-      </Pressable>
+        <Text style={styles.sectionLabel}>REGIÕES SALVAS & DISPONÍVEIS</Text>
 
-      <Text style={styles.sectionLabel}>REGIÕES SALVAS</Text>
-
-      {/* Lista */}
-      <ScrollView
-        style={styles.regionList}
-        contentContainerStyle={styles.regionListContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {loadingRegions ? (
-          <ActivityIndicator color={colors.primary} style={{ marginTop: 32 }} />
-        ) : regions.length === 0 ? (
-          <View style={styles.emptyState}>
-            <MapPin size={36} color={colors.textDisabled} strokeWidth={1.5} />
-            <Text style={styles.emptyTitle}>Nenhum mapa salvo</Text>
-            <Text style={styles.emptySubtitle}>
-              Baixe uma área do mapa para usar sem internet durante as entregas.
+        {/* 1. Região Nativa Embarcada OSM (Sempre Presente e Ativa) */}
+        <View style={styles.embeddedRegionCard}>
+          <View style={[styles.regionIconBadge, styles.badgeComplete]}>
+            <CheckCircle size={16} color="#10B981" />
+          </View>
+          <View style={styles.regionInfo}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={styles.regionName} numberOfLines={1}>
+                Maricá, Niterói & São Gonçalo
+              </Text>
+              <View style={styles.embeddedPill}>
+                <Text style={styles.embeddedPillText}>Embarcado</Text>
+              </View>
+            </View>
+            <Text style={styles.regionMeta}>
+              50.429 nós viários · Malha viária OSM integrada
             </Text>
           </View>
+        </View>
+
+        {/* 2. Regiões Baixadas pelo Usuário */}
+        {loadingRegions ? (
+          <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
         ) : (
           regions.map((r) => (
             <RegionCard
@@ -470,6 +455,8 @@ function HomeScreen({
             />
           ))
         )}
+
+        <View style={{ height: 24 }} />
       </ScrollView>
     </>
   );
@@ -831,7 +818,7 @@ const createStyles = (colors: any) =>
       borderTopRightRadius: radius.xl + 4,
       paddingHorizontal: spacing.lg,
       paddingTop: spacing.md,
-      maxHeight: SH * 0.88,
+      height: SH * 0.82,
       ...shadows.xl,
     },
     header: {
@@ -885,71 +872,64 @@ const createStyles = (colors: any) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    modeCard: {
+    homeScroll: {
+      flex: 1,
+    },
+    homeScrollContent: {
+      paddingBottom: 24,
+    },
+    offlineStatusBanner: {
       backgroundColor: colors.surfaceElevated,
       borderRadius: radius.lg,
       padding: spacing.md,
       borderWidth: 1,
       borderColor: colors.border,
       marginBottom: spacing.md,
-      gap: 8,
+      gap: 6,
     },
-    modeCardHeader: {
+    offlineStatusHeader: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
     },
-    modeStatusDot: {
+    statusDotActive: {
       width: 10,
       height: 10,
       borderRadius: 5,
+      backgroundColor: '#10B981',
     },
-    modeCardTitle: {
+    offlineStatusTitle: {
       fontSize: 12,
       fontWeight: '800',
       color: colors.text,
       letterSpacing: 0.5,
     },
-    modeCardDesc: {
+    offlineStatusDesc: {
       fontSize: 11,
       color: colors.textMuted,
       lineHeight: 15,
     },
-    modeToggleRow: {
+    embeddedRegionCard: {
       flexDirection: 'row',
-      backgroundColor: colors.surface,
-      borderRadius: radius.md,
-      padding: 4,
-      gap: 6,
-      borderWidth: 1,
-      borderColor: colors.border,
-      marginTop: 2,
-    },
-    modeToggleBtn: {
-      flex: 1,
-      paddingVertical: 8,
-      borderRadius: radius.sm,
       alignItems: 'center',
-      justifyContent: 'center',
+      gap: spacing.sm,
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      borderWidth: 1.5,
+      borderColor: 'rgba(16, 185, 129, 0.35)',
+      padding: spacing.sm + 2,
+      marginBottom: spacing.xs + 2,
     },
-    modeToggleBtnActive: {
-      backgroundColor: '#10B981',
+    embeddedPill: {
+      backgroundColor: 'rgba(16, 185, 129, 0.15)',
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 4,
     },
-    modeToggleBtnActiveOffline: {
-      backgroundColor: '#F59E0B',
-    },
-    modeToggleBtnText: {
-      fontSize: 12,
+    embeddedPillText: {
+      fontSize: 10,
       fontWeight: '700',
-      color: colors.textSecondary,
-    },
-    modeToggleBtnTextActive: {
-      color: '#FFFFFF',
-      fontWeight: '800',
-    },
-    modeToggleBtnTextActiveOffline: {
-      color: '#FFFFFF',
-      fontWeight: '800',
+      color: '#10B981',
     },
     diskRow: {
       flexDirection: 'row',

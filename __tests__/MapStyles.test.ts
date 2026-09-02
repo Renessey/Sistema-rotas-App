@@ -32,22 +32,22 @@ describe('Map Styles & Preferences Module', () => {
 
   test('getMapStyleUrl returns correct style URLs for different themes', () => {
     const standardClassic = getMapStyleUrl('standard', 'classic');
-    expect(standardClassic).toContain('navigation-day-v1');
+    expect(standardClassic).toContain('openfreemap.org/styles/bright');
 
     const standardDark = getMapStyleUrl('standard', 'dark');
-    expect(standardDark).toContain('navigation-night-v1');
+    expect(standardDark).toContain('openfreemap.org/styles/positron');
 
     const standardApple = getMapStyleUrl('standard', 'apple');
-    expect(standardApple).toContain('streets-v12');
+    expect(standardApple).toContain('openfreemap.org/styles/liberty');
 
     const standardMinimal = getMapStyleUrl('standard', 'minimal');
-    expect(standardMinimal).toContain('light-v11');
+    expect(standardMinimal).toContain('openfreemap.org/styles/positron');
 
     const satelliteClassic = getMapStyleUrl('satellite', 'classic');
-    expect(satelliteClassic).toContain('satellite-streets-v12');
+    expect(satelliteClassic).toContain('World_Imagery');
 
     const terrainClassic = getMapStyleUrl('terrain', 'classic');
-    expect(terrainClassic).toContain('outdoors-v12');
+    expect(terrainClassic).toContain('openfreemap.org/styles/liberty');
   });
 
   test('MapStyleService loads default preferences when empty', async () => {

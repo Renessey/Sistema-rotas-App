@@ -1,5 +1,3 @@
-import { getMapboxAccessToken, MAPBOX_ACCESS_TOKEN } from './env';
-
 export type MapType = 'standard' | 'satellite' | 'terrain';
 export type MapTheme = 'classic' | 'apple' | 'minimal' | 'dark';
 
@@ -15,21 +13,21 @@ export interface MapStyleConfig {
 export const MAP_TYPES: { id: MapType; label: string; icon: string; description: string }[] = [
   {
     id: 'standard',
-    label: 'Padrão Mapbox',
+    label: 'Padrão OSM',
     icon: '🗺️',
-    description: 'Mapa vetorial urbano oficial Mapbox Streets v12 com vias nítidas',
+    description: 'Mapa vetorial urbano com malha viária nítida e nomes de ruas',
   },
   {
     id: 'satellite',
-    label: 'Satélite Mapbox',
+    label: 'Satélite Aéreo',
     icon: '🛰️',
-    description: 'Imagens aéreas de altíssima resolução com overlay viário',
+    description: 'Imagens aéreas de alta resolução com relevo viário',
   },
   {
     id: 'terrain',
-    label: 'Topográfico Mapbox',
+    label: 'Topográfico / Relevo',
     icon: '⛰️',
-    description: 'Relevo, curvas de nível e estradas (Mapbox Outdoors v12)',
+    description: 'Relevo, curvas de nível e estradas regionais',
   },
 ];
 
@@ -38,119 +36,79 @@ export const MAP_THEMES: { id: MapTheme; label: string; icon: string; descriptio
     id: 'classic',
     label: 'Navegação / Trânsito',
     icon: '🏙️',
-    description: 'Estilo Mapbox Navigation Day otimizado para entregas',
+    description: 'Estilo de alta visibilidade otimizado para entregas',
   },
   {
     id: 'apple',
-    label: 'Streets v12',
+    label: 'Urbano Liberty',
     icon: '🍏',
-    description: 'Estilo urbano clássico Mapbox com nomes de bairros e avenidas',
+    description: 'Estilo urbano detalhado com bairros e avenidas',
   },
   {
     id: 'minimal',
     label: 'Light / Minimalista',
     icon: '⚪',
-    description: 'Foco total na rota azul sem poluição visual (Mapbox Light v11)',
+    description: 'Foco total na rota azul sem poluição visual',
   },
   {
     id: 'dark',
     label: 'Noturno / Dark',
     icon: '🌙',
-    description: 'Modo noturno de alto contraste (Mapbox Navigation Night v1)',
+    description: 'Modo noturno de alto contraste',
   },
 ];
 
 export function getSafeToken(): string {
-  try {
-    return getMapboxAccessToken();
-  } catch {
-    return MAPBOX_ACCESS_TOKEN || '';
+  return '';
+}
+
+/**
+ * Retorna a URL de estilo vetorial 100% livre e aberta (OpenFreeMap / OpenStreetMap / Esri).
+ * Não depende de nenhuma chave Mapbox nem gera custos/limites.
+ */
+export function getMapStyleUrl(mapType: MapType = 'standard', mapTheme: MapTheme = 'classic'): string {
+  if (mapType === 'satellite') {
+    return JSON.stringify({
+      version: 8,
+      name: 'Esri-Satellite',
+      sources: {
+        'esri-satellite': {
+          type: 'raster',
+          tiles: [
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+          ],
+          tileSize: 256,
+          attribution: '© Esri © OpenStreetMap contributors',
+        },
+      },
+      layers: [
+        {
+          id: 'esri-satellite-layer',
+          type: 'raster',
+          source: 'esri-satellite',
+          minzoom: 0,
+          maxzoom: 20,
+        },
+      ],
+    });
+  }
+
+  if (mapType === 'terrain') {
+    return 'https://tiles.openfreemap.org/styles/liberty';
+  }
+
+  switch (mapTheme) {
+    case 'dark':
+    case 'minimal':
+      return 'https://tiles.openfreemap.org/styles/positron';
+    case 'apple':
+      return 'https://tiles.openfreemap.org/styles/liberty';
+    case 'classic':
+    default:
+      return 'https://tiles.openfreemap.org/styles/bright';
   }
 }
 
 export function getMapboxStyleHttpsUrl(mapType: MapType = 'standard', mapTheme: MapTheme = 'classic'): string {
-  const token = getSafeToken();
-  let styleId = 'navigation-day-v1';
-
-  if (mapType === 'satellite') {
-    styleId = 'satellite-streets-v12';
-  } else if (mapType === 'terrain') {
-    styleId = 'outdoors-v12';
-  } else {
-    switch (mapTheme) {
-      case 'dark':
-        styleId = 'navigation-night-v1';
-        break;
-      case 'minimal':
-        styleId = 'light-v11';
-        break;
-      case 'apple':
-        styleId = 'streets-v12';
-        break;
-      case 'classic':
-      default:
-        styleId = 'navigation-day-v1';
-        break;
-    }
-  }
-
-  return `https://api.mapbox.com/styles/v1/mapbox/${styleId}?access_token=${token}`;
-}
-
-/**
- * Retorna o objeto de especificação de estilo MapLibre contendo os tiles
- * oficiais do Mapbox em alta resolução (@2x Retina).
- *
- * Esta abordagem é 100% compatível com o MapLibre Native, garantindo que o mapa
- * seja renderizado pelo motor GPU sem nenhum erro de protocolo 'mapbox://'.
- */
-export function getMapStyleUrl(mapType: MapType = 'standard', mapTheme: MapTheme = 'classic'): string {
-  const token = getSafeToken();
-  let styleId = 'navigation-day-v1';
-
-  if (mapType === 'satellite') {
-    styleId = 'satellite-streets-v12';
-  } else if (mapType === 'terrain') {
-    styleId = 'outdoors-v12';
-  } else {
-    switch (mapTheme) {
-      case 'dark':
-        styleId = 'navigation-night-v1';
-        break;
-      case 'minimal':
-        styleId = 'light-v11';
-        break;
-      case 'apple':
-        styleId = 'streets-v12';
-        break;
-      case 'classic':
-      default:
-        styleId = 'navigation-day-v1';
-        break;
-    }
-  }
-
-  const tileUrl = `https://api.mapbox.com/styles/v1/mapbox/${styleId}/tiles/256/{z}/{x}/{y}@2x?access_token=${token}`;
-
-  return JSON.stringify({
-    version: 8,
-    name: `Mapbox-${styleId}`,
-    sources: {
-      'mapbox-source': {
-        type: 'raster',
-        tiles: [tileUrl],
-        tileSize: 256,
-        attribution: '© Mapbox © OpenStreetMap',
-      },
-    },
-    layers: [
-      {
-        id: 'mapbox-layer',
-        type: 'raster',
-        source: 'mapbox-source',
-        minzoom: 0,
-        maxzoom: 22,
-      },
-    ],
-  });
+  return getMapStyleUrl(mapType, mapTheme);
 }

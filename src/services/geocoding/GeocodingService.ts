@@ -1,53 +1,53 @@
 import type { DeliveryEntity, GeocodeResult } from '../../types/geo';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { RoutingService } from '../routing/RoutingService';
-import { MapboxQuota } from '../routing/MapboxQuota';
-import { getMapboxAccessToken } from '../../config/env';
 import {
   buildAddressQuery,
   normalizeForSearch,
   extractCep,
 } from '../../utils/addressParser';
 
-interface MapboxGeocodeFeature {
-  id: string;
-  type: string;
-  place_type: string[];
-  relevance: number;
-  place_name: string;
-  center: [number, number]; // [longitude, latitude]
+interface PhotonFeature {
   geometry: {
-    type: string;
-    coordinates: [number, number];
+    coordinates: [number, number]; // [lng, lat]
   };
-  address?: string;
+  properties: {
+    name?: string;
+    street?: string;
+    housenumber?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+  };
 }
 
-interface MapboxGeocodeApiResponse {
-  type: string;
-  features: MapboxGeocodeFeature[];
-  attribution: string;
+interface PhotonResponse {
+  features: PhotonFeature[];
 }
 
 /**
- * GeocodingService — Motor de Geocodificação Oficial Mapbox Geocoding API v5.
+ * GeocodingService — Motor de Geocodificação Offline-First & Gratuito.
  *
  * Estratégia de Geocodificação:
- *   0. Cache local SQLite / Memória (0ms, offline, economiza cota da API)
- *   1. Coordenadas já preenchidas na planilha (se válidas, 0 chamadas)
- *   2. Mapbox Geocoding API v5 — Alta precisão viária, busca estruturada e cota integrada
- *   3. Enriquecimento por CEP (ViaCEP / BrasilAPI) quando necessário
+ *   1. Coordenadas preenchidas na planilha (0ms, 100% offline, exato)
+ *   2. Histórico permanente de pinos ajustados e confirmados no SQLite (0ms, offline)
+ *   3. Cache local SQLite (0ms, offline)
+ *   4. Geocodificador aberto Photon (OpenStreetMap) + ViaCEP (100% gratuito e sem limite de API)
  */
 export class GeocodingService {
   private static memCache = new Map<string, GeocodeResult>();
-  private static forceOffline = false;
+  private static forceOffline = true;
 
-  static setForceOffline(offline: boolean) {
-    GeocodingService.forceOffline = offline;
+  static setForceOffline(_offline: boolean) {
+    GeocodingService.forceOffline = true;
   }
 
   static isForcedOffline(): boolean {
-    return GeocodingService.forceOffline;
+    return true;
+  }
+
+  static async mapboxGeocode(query: string): Promise<GeocodeResult | null> {
+    return GeocodingService.photonGeocode(query);
   }
 
   /** Retorna o cacheKey canônico para um endereço */
@@ -122,58 +122,45 @@ export class GeocodingService {
   }
 
   /**
-   * Passo 2: Mapbox Geocoding API v5
-   * Endpoint: https://api.mapbox.com/geocoding/v5/mapbox.places/{query}.json
+   * Geocodificação aberta via Photon (OpenStreetMap) — Gratuita e pública
    */
-  static async mapboxGeocode(query: string): Promise<GeocodeResult | null> {
-    if (GeocodingService.forceOffline || !query || query.trim().length < 3) return null;
-
-    const canRequest = await MapboxQuota.canMakeRequest();
-    if (!canRequest) {
-      console.warn('[GeocodingService] Limite diário de requisições Mapbox atingido.');
-      return null;
-    }
+  static async photonGeocode(query: string): Promise<GeocodeResult | null> {
+    if (!query || query.trim().length < 3) return null;
 
     try {
-      const token = getMapboxAccessToken();
-      const encodedQuery = encodeURIComponent(query.trim());
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodedQuery}.json?country=BR&types=address,poi,place&language=pt&access_token=${token}`;
+      const encoded = encodeURIComponent(query.trim());
+      // Foca na região do Brasil / Rio de Janeiro
+      const url = `https://photon.komoot.io/api/?q=${encoded}&limit=1&lat=-22.9&lon=-43.0`;
 
       const res = await fetch(url, {
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5000),
       });
 
-      if (!res.ok) {
-        console.warn(`[GeocodingService] Mapbox Geocoding HTTP error ${res.status}`);
-        return null;
-      }
+      if (!res.ok) return null;
+      const data = (await res.json()) as PhotonResponse;
 
-      await MapboxQuota.recordRequest(1);
-      const data = (await res.json()) as MapboxGeocodeApiResponse;
-
-      if (!data.features || data.features.length === 0) {
-        return null;
-      }
+      if (!data.features || data.features.length === 0) return null;
 
       const first = data.features[0];
-      const [lng, lat] = first.center;
+      const [lng, lat] = first.geometry.coordinates;
 
       if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
         return null;
       }
 
-      const confidence: GeocodeResult['confidence'] =
-        first.relevance >= 0.8 ? 'high' : first.relevance >= 0.5 ? 'medium' : 'low';
+      const p = first.properties;
+      const formatted = [p.name || p.street, p.housenumber, p.city, p.state]
+        .filter(Boolean)
+        .join(', ');
 
       return {
         latitude: lat,
         longitude: lng,
-        confidence,
-        provider: 'mapbox',
-        formattedAddress: first.place_name,
+        confidence: 'high',
+        provider: 'osm_photon',
+        formattedAddress: formatted || query,
       };
-    } catch (e) {
-      console.warn('[GeocodingService] Mapbox Geocoding request failed', e);
+    } catch {
       return null;
     }
   }
@@ -197,7 +184,7 @@ export class GeocodingService {
   }
 
   /**
-   * Geocodifica uma entrega completa usando exclusivamente o Mapbox com cache local.
+   * Geocodifica uma entrega completa usando histórico local, cache e provedores abertos.
    */
   static async geocodeDelivery(
     row: Pick<DeliveryEntity, 'address' | 'number' | 'neighborhood' | 'city' | 'state' | 'cep'>,
@@ -244,15 +231,15 @@ export class GeocodingService {
       cep: cep ?? undefined,
     });
 
-    // 2. Mapbox Geocoding
-    let result = await GeocodingService.mapboxGeocode(query);
+    // 2. Geocodificação aberta via Photon OSM
+    let result = await GeocodingService.photonGeocode(query);
 
-    // 3. Se falhou e tem CEP, tenta expandir o CEP via ViaCEP e consulta Mapbox novamente
+    // 3. Se falhou e tem CEP, tenta expandir o CEP via ViaCEP
     if (!result && cep) {
       const expandedStreet = await GeocodingService.viaCepLookup(cep);
       if (expandedStreet) {
         const fullQuery = row.number ? `${expandedStreet}, ${row.number}` : expandedStreet;
-        result = await GeocodingService.mapboxGeocode(fullQuery);
+        result = await GeocodingService.photonGeocode(fullQuery);
       }
     }
 
@@ -281,7 +268,7 @@ export class GeocodingService {
     let provider = 'spreadsheet';
     let formattedAddress = row.destination || row.address || row.name;
 
-    // Se coordenadas forem nulas ou inválidas, executa busca no Mapbox Geocoding
+    // Se coordenadas forem nulas ou inválidas, executa busca no Geocoding
     if (lat === null || lon === null || isNaN(lat) || isNaN(lon) || (lat === 0 && lon === 0)) {
       const geo = await GeocodingService.geocodeDelivery({
         address: row.destination || row.address || row.name || '',
@@ -299,7 +286,7 @@ export class GeocodingService {
       formattedAddress = geo.formattedAddress || formattedAddress;
     }
 
-    // Alinha o ponto à malha viária real usando Mapbox Snap
+    // Alinha o ponto à malha viária real usando Snap do motor offline
     const snapped = await RoutingService.snapPoint([lon, lat]);
     const snappedLon = snapped.snapped ? snapped.snapped[0] : lon;
     const snappedLat = snapped.snapped ? snapped.snapped[1] : lat;
@@ -309,13 +296,13 @@ export class GeocodingService {
       longitude: lon,
       snappedLatitude: snappedLat,
       snappedLongitude: snappedLon,
-      provider: snapped.matched ? `${provider}+mapbox_snap` : provider,
+      provider: snapped.matched ? `${provider}+osm_snap` : provider,
       formattedAddress,
     };
   }
 
   /**
-   * Geocodifica uma string de busca direta usando o histórico local e o Mapbox Places API.
+   * Geocodifica uma string de busca direta usando o histórico local e o Photon OSM.
    */
   static async geocodeQuery(query: string): Promise<GeocodeResult | null> {
     const hist = DatabaseService.findAddressHistory({ address: query });
@@ -328,7 +315,7 @@ export class GeocodingService {
         formattedAddress: hist.rawAddress || query,
       };
     }
-    return this.mapboxGeocode(query);
+    return this.photonGeocode(query);
   }
 
   static clearCache(): void {

@@ -147,15 +147,13 @@ export function OptimizationSuccessModal({
             Seu itinerário foi recalculado com sucesso pela menor distância e tempo.
           </Text>
 
-          {/* ── Engine Badge (Offline OSM / Online Mapbox) ── */}
+          {/* ── Engine Badge (Offline OSM) ── */}
           <View style={styles.modeBadge}>
-            <View style={[styles.modeDot, isOffline ? styles.modeDotOffline : styles.modeDotOnline]} />
+            <View style={[styles.modeDot, styles.modeDotOffline]} />
             <Text style={styles.modeBadgeText}>
-              {isOffline
-                ? 'Malha Viária Offline (OpenStreetMap)'
-                : 'Traçado de Alta Resolução (Mapbox)'}
+              Motor Nativo Offline (OpenStreetMap)
             </Text>
-            {isOffline && <ShieldCheck size={13} color="#10B981" />}
+            <ShieldCheck size={13} color="#10B981" />
           </View>
 
           {/* ── Metrics Cards Grid ── */}

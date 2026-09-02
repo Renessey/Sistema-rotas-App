@@ -548,6 +548,10 @@ export class DatabaseService {
     }
   }
 
+  static clearAll(listId?: number): void {
+    this.clearDeliveries(listId);
+  }
+
   static getStats(listId?: number): {
     total: number;
     located: number;

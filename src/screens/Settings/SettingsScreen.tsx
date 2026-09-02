@@ -18,16 +18,13 @@ import { MapStyleService } from '../../services/map/MapStyleService';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { LocationService } from '../../services/gps/LocationService';
 import { RoutingService } from '../../services/routing/RoutingService';
-import { MapboxService } from '../../services/routing/MapboxService';
-import { MapboxQuota } from '../../services/routing/MapboxQuota';
+import { OfflineRoutingEngine } from '../../services/routing/OfflineRoutingEngine';
 import { MAP_TYPES, MAP_THEMES, MapType, MapTheme } from '../../config/mapStyles';
 import type { Costing, RoutingProvider } from '../../types/geo';
 import {
   ArrowLeft,
   Settings as SettingsIcon,
   Activity,
-  Moon,
-  Sun,
   Layers,
   Car,
   Truck,
@@ -41,8 +38,8 @@ import {
   CheckCircle2,
   AlertCircle,
   FlaskConical,
-  Globe,
   Radio,
+  Zap,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -63,9 +60,7 @@ export default function SettingsScreen({ navigation }: Props) {
   const [mapTheme, setMapTheme] = useState<MapTheme>('classic');
   const [hideCompleted, setHideCompleted] = useState(false);
   const [costingMode, setCostingMode] = useState<Costing>('auto');
-  const [routingProvider, setRoutingProvider] = useState<RoutingProvider>('mapbox');
   const [stats, setStats] = useState({ total: 0, completed: 0, pending: 0, failed: 0, located: 0, invalidCoords: 0 });
-  const [mapboxUsage, setMapboxUsage] = useState({ count: 0, limit: 3000, remaining: 3000 });
 
   // Diagnósticos
   const [diagLoading, setDiagLoading] = useState(false);
@@ -76,9 +71,12 @@ export default function SettingsScreen({ navigation }: Props) {
     accuracy?: number | null;
     message?: string;
   }>({ ok: false });
-  const [routerStatus, setRouterStatus] = useState<{ ok: boolean; provider: string }>({
-    ok: MapboxService.isConfigured(),
-    provider: 'Mapbox Directions v5 + OSRM (Fallback)',
+
+  const [offlineEngineInfo, setOfflineEngineInfo] = useState({
+    region: '',
+    nodesCount: 0,
+    edgesCount: 0,
+    available: false,
   });
 
   const loadSettings = useCallback(async () => {
@@ -87,21 +85,23 @@ export default function SettingsScreen({ navigation }: Props) {
     setMapTheme(prefs.mapTheme);
     setHideCompleted(prefs.hideCompleted);
     setCostingMode(prefs.costingMode);
-    setRoutingProvider(prefs.routingProvider || 'mapbox');
     setStats(DatabaseService.getStats());
 
-    try {
-      const quota = await MapboxQuota.getUsage();
-      setMapboxUsage(quota);
-    } catch {}
+    if (OfflineRoutingEngine.isAvailable()) {
+      const meta = OfflineRoutingEngine.getRegionMetadata();
+      setOfflineEngineInfo({
+        region: meta.region,
+        nodesCount: meta.nodesCount,
+        edgesCount: meta.edgesCount,
+        available: true,
+      });
+    }
   }, []);
 
   const runDiagnostics = useCallback(async () => {
     setDiagLoading(true);
     try {
       setStats(DatabaseService.getStats());
-      const quota = await MapboxQuota.getUsage();
-      setMapboxUsage(quota);
     } catch {}
 
     try {
@@ -121,10 +121,15 @@ export default function SettingsScreen({ navigation }: Props) {
       setGpsStatus({ ok: false, message: e?.message || 'GPS desligado' });
     }
 
-    try {
-      const meta = RoutingService.getRegionMetadata();
-      setRouterStatus({ ok: MapboxService.isConfigured(), provider: meta.municipalities.join(', ') });
-    } catch {}
+    if (OfflineRoutingEngine.isAvailable()) {
+      const meta = OfflineRoutingEngine.getRegionMetadata();
+      setOfflineEngineInfo({
+        region: meta.region,
+        nodesCount: meta.nodesCount,
+        edgesCount: meta.edgesCount,
+        available: true,
+      });
+    }
 
     setDiagLoading(false);
   }, []);
@@ -139,14 +144,14 @@ export default function SettingsScreen({ navigation }: Props) {
     await MapStyleService.setMapType(type);
   };
 
-  const handleUpdateTheme = async (t: MapTheme) => {
-    setMapTheme(t);
-    await MapStyleService.setMapTheme(t);
+  const handleUpdateTheme = async (theme: MapTheme) => {
+    setMapTheme(theme);
+    await MapStyleService.setMapTheme(theme);
   };
 
-  const handleToggleHide = async (value: boolean) => {
-    setHideCompleted(value);
-    await MapStyleService.setHideCompleted(value);
+  const handleToggleHide = async (val: boolean) => {
+    setHideCompleted(val);
+    await MapStyleService.setHideCompleted(val);
   };
 
   const handleUpdateCosting = async (mode: Costing) => {
@@ -154,43 +159,40 @@ export default function SettingsScreen({ navigation }: Props) {
     await MapStyleService.setCostingMode(mode);
   };
 
-  const handleUpdateProvider = async (p: RoutingProvider) => {
-    setRoutingProvider(p);
-    await MapStyleService.setRoutingProvider(p);
+  const testRouteCalculation = async () => {
+    try {
+      const p1: [number, number] = [-42.8188, -22.9192];
+      const p2: [number, number] = [-43.1189, -22.8832];
+      const t0 = Date.now();
+      const result = await RoutingService.route([p1, p2]);
+      const delta = Date.now() - t0;
+
+      Alert.alert(
+        'Teste de Rota Offline OK! 🚀',
+        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nTempo de cálculo: ${delta} ms\nPontos de curva: ${result.geojson.features[0]?.geometry.coordinates.length}\nMotor: OpenStreetMap Nativo (100% Offline)`,
+      );
+    } catch (e: any) {
+      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota offline.');
+    }
   };
 
   const handleClearDatabase = () => {
     Alert.alert(
       'Limpar Todas as Entregas?',
-      'Esta ação apagará todas as entregas salvas e a rota atual do banco de dados local.',
+      'Esta ação irá apagar permanentemente todas as entregas salvas no banco de dados local.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
-          text: 'Sim, Apagar',
+          text: 'Limpar Tudo',
           style: 'destructive',
           onPress: () => {
-            DatabaseService.clearDeliveries();
+            DatabaseService.clearAll();
             setStats(DatabaseService.getStats());
-            Alert.alert('Sucesso', 'Base de entregas limpa com sucesso.');
+            Alert.alert('Sucesso', 'Banco de entregas limpo.');
           },
         },
       ],
     );
-  };
-
-  const testRouteCalculation = async () => {
-    try {
-      const p1: [number, number] = [-42.8188, -22.9192]; // Maricá
-      const p2: [number, number] = [-43.1189, -22.8832]; // Niterói
-
-      const result = await RoutingService.route([p1, p2]);
-      Alert.alert(
-        'Teste de Rota — Mapbox Directions v5',
-        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nProvedor: ${result.geojson.features[0]?.properties?.provider || 'Mapbox'}\nStatus: Traçado de alta precisão com tráfego em tempo real.`,
-      );
-    } catch (e: any) {
-      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota. Verifique a conexão.');
-    }
   };
 
   return (
@@ -206,7 +208,7 @@ export default function SettingsScreen({ navigation }: Props) {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
+        {/* Top Bar */}
         <View style={styles.topBar}>
           <Pressable
             style={({ pressed }) => [styles.backBtn, pressed && styles.btnPressed]}
@@ -223,62 +225,53 @@ export default function SettingsScreen({ navigation }: Props) {
             hitSlop={8}
           >
             <RefreshCw size={14} color={colors.textSecondary} />
-            <Text style={styles.refreshBtnText}>Atualizar Diagnóstico</Text>
+            <Text style={styles.refreshBtnText}>Atualizar</Text>
           </Pressable>
         </View>
 
-        <View style={styles.headerRow}>
+        {/* Header Title */}
+        <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>Configurações</Text>
-            <Text style={styles.headerSubtitle}>Preferências, Roteamento e Diagnóstico</Text>
+            <Text style={styles.headerSub}>Motor de Rotas 100% Offline & Preferências</Text>
           </View>
-          <View style={styles.headerBadge}>
-            <SettingsIcon size={24} color={colors.primary} />
+          <View style={styles.headerIcon}>
+            <SettingsIcon size={22} color={colors.primary} />
           </View>
         </View>
 
-        {/* 1. Provedor de Roteamento */}
+        {/* 1. Status do Motor Offline OSM */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
-            <Globe size={16} color={colors.primary} />
-            <Text style={styles.sectionHeader}>MOTOR DE ROTEAMENTO & GPS</Text>
+            <Zap size={16} color={colors.primary} />
+            <Text style={styles.sectionHeader}>MOTOR DE ROTEAMENTO NATIVO (OSM)</Text>
           </View>
 
-          <Text style={styles.subHeader}>Selecione o provedor de rotas para cálculo do trajeto:</Text>
-          <View style={styles.providerCol}>
-            {/* 1. Mapbox Directions (Motor Principal) */}
-            <Pressable
-              style={[
-                styles.providerCard,
-                routingProvider === 'mapbox' && styles.providerCardActive,
-              ]}
-              onPress={() => handleUpdateProvider('mapbox')}
-            >
-              <View style={styles.providerLeft}>
-                <View
-                  style={[
-                    styles.providerDot,
-                    routingProvider === 'mapbox' && styles.providerDotActive,
-                  ]}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.providerTitle}>Mapbox Directions API v5 (Recomendado)</Text>
-                  <Text style={styles.providerDesc}>
-                    Motor online de alta resolução viária, suporte a tráfego e cota diária de 3.000 req/dia
-                  </Text>
-                </View>
-              </View>
-              <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
-                <Text style={[styles.badgePillText, { color: colors.success }]}>
-                  {mapboxUsage.count}/3000 hoje
+          <View style={styles.providerCardActive}>
+            <View style={styles.providerLeft}>
+              <View style={styles.providerDotActive} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.providerTitle}>Motor Nativo OpenStreetMap</Text>
+                <Text style={styles.providerDesc}>
+                  Calcula rotas curva a curva e otimiza dezenas de paradas sem internet, com custo zero e sem limite de requisições.
                 </Text>
               </View>
-            </Pressable>
+            </View>
+            <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
+              <Text style={[styles.badgePillText, { color: colors.success }]}>
+                100% Ilimitado
+              </Text>
+            </View>
+          </View>
 
+          <View style={{ marginTop: spacing.sm, gap: 4 }}>
+            <DiagRow label="Região Viária:" value={offlineEngineInfo.region || 'Maricá - Niterói - SG'} color={colors.primary} bold />
+            <DiagRow label="Nós Viários Indexados:" value={`${offlineEngineInfo.nodesCount.toLocaleString('pt-BR')} nós`} />
+            <DiagRow label="Trechos com Curvas Reais:" value={`${offlineEngineInfo.edgesCount.toLocaleString('pt-BR')} vias`} />
           </View>
         </View>
 
-        {/* 2. Diagnóstico Completo do Sistema Integrado */}
+        {/* 2. Diagnóstico do Sistema */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Activity size={16} color={colors.primary} />
@@ -332,34 +325,14 @@ export default function SettingsScreen({ navigation }: Props) {
             <DiagRow label="Entregas pendentes:" value={String(stats.pending)} color={colors.warning} />
           </View>
 
-          {/* Motor de Roteamento */}
-          <View style={styles.diagSection}>
-            <View style={styles.diagHeaderRow}>
-              <View style={styles.diagTitleLeft}>
-                <Cpu size={14} color={colors.textSecondary} />
-                <Text style={styles.diagSectionTitle}>MOTOR DE ROTEAMENTO</Text>
-              </View>
-              <View style={[styles.badgePill, { backgroundColor: routerStatus.ok ? colors.successGhost : colors.warningGhost }]}>
-                <Text style={[styles.badgePillText, { color: routerStatus.ok ? colors.success : colors.warning }]}>
-                  {routerStatus.ok ? 'Mapbox Ativo' : 'OSRM (Fallback)'}
-                </Text>
-              </View>
-            </View>
-            <DiagRow label="Provedor Principal:" value="Mapbox Directions API v5" bold />
-            <DiagRow label="Precisão de Traçado:" value="6 Casas Decimais (1 metro)" color={colors.success} />
-            <DiagRow label="Fallback Automático:" value="OSRM Público (router.project-osrm.org)" color={colors.primary} />
-            <DiagRow label="Renderizador do Mapa:" value="MapLibre Native 11.3 (Vetorial)" />
-          </View>
-
           {/* Botão Teste de Rota */}
           <Pressable style={styles.testRouteBtn} onPress={testRouteCalculation}>
             <FlaskConical size={16} color={colors.primary} />
-            <Text style={styles.testRouteBtnText}>Testar Cálculo de Rota (Maricá ↔ Niterói)</Text>
+            <Text style={styles.testRouteBtnText}>Testar Cálculo de Rota Offline (Maricá ↔ Niterói)</Text>
           </Pressable>
         </View>
 
-
-        {/* 3. Tipo e Estilo do Mapa */}
+        {/* 3. Estilo e Camadas do Mapa */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Layers size={16} color={colors.primary} />
@@ -397,7 +370,7 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 5. Modo de Roteamento / Veículo */}
+        {/* 4. Modo de Roteamento / Veículo */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Navigation size={16} color={colors.primary} />
@@ -447,7 +420,7 @@ export default function SettingsScreen({ navigation }: Props) {
           </View>
         </View>
 
-        {/* 6. Gestão de Dados */}
+        {/* 5. Gestão de Dados */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Trash2 size={16} color={colors.danger} />
@@ -464,7 +437,7 @@ export default function SettingsScreen({ navigation }: Props) {
         {/* Informações da Versão */}
         <View style={styles.footerInfo}>
           <Text style={styles.footerText}>RotaSimples v2.1</Text>
-          <Text style={styles.footerSubText}>Mapbox Directions API v5 + MapLibre Native</Text>
+          <Text style={styles.footerSubText}>Motor Nativo Offline OpenStreetMap + MapLibre</Text>
         </View>
       </ScrollView>
     </View>
@@ -556,128 +529,118 @@ const createStyles = (colors: any) =>
       color: colors.textSecondary,
     },
     btnPressed: {
-      opacity: 0.8,
-      transform: [{ scale: 0.97 }],
+      opacity: 0.7,
+      transform: [{ scale: 0.98 }],
     },
     scroll: { flex: 1 },
-    content: { paddingHorizontal: spacing.lg, gap: spacing.md },
-    headerRow: {
+    content: {
+      paddingHorizontal: spacing.md,
+      gap: spacing.md,
+    },
+    header: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: spacing.sm,
+      marginBottom: spacing.xs,
     },
     headerTitle: {
-      ...typography.displayMedium,
-      color: colors.primary,
+      ...typography.headline,
+      color: colors.text,
+      fontWeight: '800',
     },
-    headerSubtitle: {
+    headerSub: {
       ...typography.caption,
       color: colors.textMuted,
+      marginTop: 2,
     },
-    headerBadge: {
-      width: 48,
-      height: 48,
-      borderRadius: radius.md,
+    headerIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: radius.lg,
       backgroundColor: colors.primaryGhost,
       alignItems: 'center',
       justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
     },
-
     card: {
       backgroundColor: colors.surface,
-      borderRadius: radius.md,
+      borderRadius: radius.xl,
       padding: spacing.md,
       borderWidth: 1,
       borderColor: colors.border,
-      gap: spacing.sm,
       ...shadows.sm,
     },
     cardTitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.xs + 2,
-      marginBottom: 2,
+      gap: 8,
+      marginBottom: spacing.md,
     },
     sectionHeader: {
       ...typography.label,
       color: colors.textSecondary,
-      fontWeight: '700',
-      letterSpacing: 0.6,
-      flex: 1,
+      fontWeight: '800',
+      letterSpacing: 0.5,
     },
     subHeader: {
       ...typography.caption,
-      color: colors.textSecondary,
-      fontWeight: '600',
-      marginTop: spacing.xs,
-    },
-
-    providerCol: {
-      gap: spacing.xs + 2,
-      marginTop: spacing.xs,
-    },
-    providerCard: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: radius.md,
-      padding: spacing.md,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      gap: spacing.sm,
+      color: colors.textMuted,
+      fontWeight: '700',
+      marginBottom: spacing.xs,
     },
     providerCardActive: {
-      borderColor: colors.primary,
       backgroundColor: colors.primaryGhost,
+      borderRadius: radius.lg,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderColor: colors.primary,
+      gap: spacing.sm,
     },
     providerLeft: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       gap: spacing.sm,
-      flex: 1,
     },
-    providerDot: {
+    providerDotActive: {
       width: 12,
       height: 12,
       borderRadius: 6,
-      borderWidth: 2,
-      borderColor: colors.borderStrong,
-    },
-    providerDotActive: {
-      borderColor: colors.primary,
       backgroundColor: colors.primary,
+      marginTop: 4,
     },
     providerTitle: {
-      ...typography.bodySmall,
+      fontSize: 14,
       fontWeight: '700',
       color: colors.text,
     },
     providerDesc: {
       ...typography.caption,
       color: colors.textMuted,
-      fontSize: 11,
-      marginTop: 1,
-    },
-
-    diagSection: {
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: radius.md,
-      padding: spacing.sm + 2,
-      gap: 2,
-      borderWidth: 1,
-      borderColor: colors.border,
       marginTop: 2,
+      lineHeight: 16,
+    },
+    badgePill: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      borderRadius: radius.full,
+    },
+    badgePillText: {
+      fontSize: 11,
+      fontWeight: '700',
+    },
+    diagSection: {
+      marginBottom: spacing.md,
+      paddingBottom: spacing.sm,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
     },
     diagHeaderRow: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 4,
-      paddingBottom: 4,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
+      marginBottom: spacing.xs,
     },
     diagTitleLeft: {
       flexDirection: 'row',
@@ -685,46 +648,120 @@ const createStyles = (colors: any) =>
       gap: 6,
     },
     diagSectionTitle: {
-      ...typography.label,
       fontSize: 11,
+      fontWeight: '700',
       color: colors.textSecondary,
-      fontWeight: '700',
+      letterSpacing: 0.3,
     },
-    badgePill: {
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-      borderRadius: radius.full,
-    },
-    badgePillText: {
-      ...typography.caption,
-      fontSize: 10,
-      fontWeight: '700',
-    },
-
     testRouteBtn: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.primaryGhost,
+      paddingVertical: spacing.sm,
       borderRadius: radius.md,
-      paddingVertical: spacing.sm + 2,
-      paddingHorizontal: spacing.md,
       borderWidth: 1,
-      borderColor: colors.primary + '44',
-      marginTop: spacing.xs,
+      borderColor: colors.primary,
       gap: 6,
+      marginTop: spacing.xs,
     },
     testRouteBtnText: {
-      ...typography.caption,
+      fontSize: 13,
       fontWeight: '700',
       color: colors.primary,
     },
-
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+      marginBottom: spacing.xs,
+    },
+    chip: {
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.xs + 2,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    chipActive: {
+      backgroundColor: colors.primary,
+      borderColor: colors.primary,
+    },
+    chipText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    chipTextActive: {
+      color: '#FFFFFF',
+      fontWeight: '700',
+    },
+    themeGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+    },
+    themeBox: {
+      flex: 1,
+      minWidth: '45%',
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+      alignItems: 'center',
+    },
+    themeBoxActive: {
+      backgroundColor: colors.primaryGhost,
+      borderColor: colors.primary,
+      borderWidth: 1.5,
+    },
+    themeBoxLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    themeBoxLabelActive: {
+      color: colors.primary,
+      fontWeight: '700',
+    },
+    vehicleRow: {
+      flexDirection: 'row',
+      gap: spacing.xs,
+      marginBottom: spacing.xs,
+    },
+    vehicleBtn: {
+      flex: 1,
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: colors.border,
+      gap: 4,
+    },
+    vehicleBtnActive: {
+      backgroundColor: colors.primaryGhost,
+      borderColor: colors.primary,
+      borderWidth: 1.5,
+    },
+    vehicleBtnLabel: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: colors.textSecondary,
+    },
+    vehicleBtnLabelActive: {
+      color: colors.primary,
+      fontWeight: '700',
+    },
     rowBetween: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: spacing.md,
     },
     rowLeft: {
       flexDirection: 'row',
@@ -733,111 +770,30 @@ const createStyles = (colors: any) =>
       flex: 1,
     },
     rowTitle: {
-      ...typography.bodyMedium,
-      color: colors.text,
+      fontSize: 13,
       fontWeight: '600',
+      color: colors.text,
     },
     rowSub: {
       ...typography.caption,
       color: colors.textMuted,
     },
-    chipRow: { flexDirection: 'row', gap: spacing.xs },
-    chip: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: radius.md,
-      paddingVertical: spacing.sm,
-      paddingHorizontal: spacing.xs,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      gap: 4,
-    },
-    chipActive: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primaryGhost,
-    },
-    chipText: {
-      ...typography.caption,
-      color: colors.textSecondary,
-      fontWeight: '600',
-    },
-    chipTextActive: {
-      color: colors.primary,
-      fontWeight: '700',
-    },
-    themeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-    themeBox: {
-      flexBasis: '48%',
-      flexGrow: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: radius.md,
-      padding: spacing.sm,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      gap: spacing.xs,
-    },
-    themeBoxActive: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primaryGhost,
-    },
-    themeBoxLabel: {
-      ...typography.caption,
-      color: colors.textSecondary,
-      fontWeight: '600',
-    },
-    themeBoxLabelActive: {
-      color: colors.primary,
-      fontWeight: '700',
-    },
-    vehicleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-    vehicleBtn: {
-      flexBasis: '48%',
-      flexGrow: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: colors.surfaceElevated,
-      borderRadius: radius.md,
-      padding: spacing.sm,
-      borderWidth: 1.5,
-      borderColor: colors.border,
-      gap: spacing.xs,
-    },
-    vehicleBtnActive: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primaryGhost,
-    },
-    vehicleBtnLabel: {
-      ...typography.caption,
-      color: colors.textSecondary,
-      fontWeight: '600',
-    },
-    vehicleBtnLabelActive: {
-      color: colors.primary,
-      fontWeight: '700',
-    },
-
     dangerBtn: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: colors.dangerGhost,
+      paddingVertical: spacing.sm,
       borderRadius: radius.md,
-      paddingVertical: spacing.sm + 2,
       borderWidth: 1,
-      borderColor: colors.danger + '33',
-      marginTop: spacing.xs,
+      borderColor: colors.danger,
       gap: 6,
+      marginTop: spacing.sm,
     },
     dangerBtnText: {
-      ...typography.caption,
-      color: colors.danger,
+      fontSize: 13,
       fontWeight: '700',
+      color: colors.danger,
     },
     footerInfo: {
       alignItems: 'center',
@@ -846,11 +802,11 @@ const createStyles = (colors: any) =>
     },
     footerText: {
       ...typography.caption,
-      color: colors.textMuted,
-      fontWeight: '600',
+      fontWeight: '700',
+      color: colors.textSecondary,
     },
     footerSubText: {
-      ...typography.label,
-      color: colors.textDisabled,
+      fontSize: 10,
+      color: colors.textMuted,
     },
   });

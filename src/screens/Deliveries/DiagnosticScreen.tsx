@@ -16,9 +16,7 @@ import { spacing, radius, shadows, typography } from '../../theme';
 import { DatabaseService } from '../../storage/DatabaseService';
 import { LocationService } from '../../services/gps/LocationService';
 import { RoutingService } from '../../services/routing/RoutingService';
-import { MapboxService } from '../../services/routing/MapboxService';
-import { MapboxQuota, type MapboxQuotaStatus } from '../../services/routing/MapboxQuota';
-import { RouteCache } from '../../services/routing/RouteCache';
+import { OfflineRoutingEngine } from '../../services/routing/OfflineRoutingEngine';
 import {
   ArrowLeft,
   RefreshCw,
@@ -28,6 +26,8 @@ import {
   Cpu,
   Map,
   FlaskConical,
+  ShieldCheck,
+  Zap,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Diagnostic'>;
@@ -55,15 +55,14 @@ export default function DiagnosticScreen({ navigation }: Props) {
     invalidCoords: 0,
   });
 
-  const [mapboxQuota, setMapboxQuota] = useState<MapboxQuotaStatus>({
-    date: '',
-    count: 0,
-    limit: 3000,
-    remaining: 3000,
-    isLimitReached: false,
+  const [offlineStats, setOfflineStats] = useState({
+    available: false,
+    region: '',
+    nodesCount: 0,
+    edgesCount: 0,
+    gridCellsCount: 0,
+    version: '',
   });
-  const [mapboxConfigured, setMapboxConfigured] = useState(false);
-  const [cacheEntriesCount, setCacheEntriesCount] = useState(0);
 
   const runDiagnostics = useCallback(async () => {
     setLoading(true);
@@ -100,14 +99,29 @@ export default function DiagnosticScreen({ navigation }: Props) {
       });
     }
 
-    // 3. Diagnóstico do Mapbox Directions API & Cota Diária (3.000 req/dia)
+    // 3. Diagnóstico do Motor Offline OSM
     try {
-      const isConfig = MapboxService.isConfigured();
-      setMapboxConfigured(isConfig);
-
-      const quota = await MapboxQuota.getUsage();
-      setMapboxQuota(quota);
-      setCacheEntriesCount(RouteCache.size());
+      const isAvail = OfflineRoutingEngine.isAvailable();
+      if (isAvail) {
+        const meta = OfflineRoutingEngine.getRegionMetadata();
+        setOfflineStats({
+          available: true,
+          region: meta.region,
+          nodesCount: meta.nodesCount,
+          edgesCount: meta.edgesCount,
+          gridCellsCount: meta.gridCellsCount,
+          version: meta.version,
+        });
+      } else {
+        setOfflineStats({
+          available: false,
+          region: 'Não Carregado',
+          nodesCount: 0,
+          edgesCount: 0,
+          gridCellsCount: 0,
+          version: '',
+        });
+      }
     } catch {
       // ignore
     }
@@ -119,18 +133,19 @@ export default function DiagnosticScreen({ navigation }: Props) {
     runDiagnostics();
   }, [runDiagnostics]);
 
-  const testMapboxRoute = async () => {
+  const testOfflineRoute = async () => {
     try {
       // Teste de rota entre Maricá e Niterói
       const p1: [number, number] = [-42.8188, -22.9192]; // Maricá
       const p2: [number, number] = [-43.1189, -22.8832]; // Niterói
 
+      const startTime = Date.now();
       const result = await RoutingService.route([p1, p2]);
-      await runDiagnostics();
+      const durationMs = Date.now() - startTime;
 
       Alert.alert(
-        'Teste de Rota Mapbox OK!',
-        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nProvedor: ${result.geojson.features[0]?.properties?.provider || 'Mapbox'}\nStatus: Traçado de alta resolução com precisão viária (6 casas decimais).`,
+        'Teste de Rota Offline OK! 🚀',
+        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nTempo de cálculo: ${durationMs} ms\nPontos de curva viária: ${result.geojson.features[0]?.geometry.coordinates.length}\nProvedor: Motor Nativo OSM (100% Offline e Ilimitado)`,
       );
     } catch (e: any) {
       Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota.');
@@ -174,7 +189,7 @@ export default function DiagnosticScreen({ navigation }: Props) {
         <View style={styles.headerRow}>
           <View>
             <Text style={styles.headerTitle}>Diagnóstico do Sistema</Text>
-            <Text style={styles.headerSubtitle}>Validação do Motor Mapbox & Cota Diária</Text>
+            <Text style={styles.headerSubtitle}>Validação do Motor 100% Offline & Banco de Dados</Text>
           </View>
           <View style={styles.headerBadge}>
             <Activity size={24} color={colors.primary} />
@@ -188,65 +203,61 @@ export default function DiagnosticScreen({ navigation }: Props) {
           </View>
         ) : (
           <>
-            {/* 1. Mapbox Directions API & Cota Diária */}
+            {/* 1. Motor de Roteamento Nativo Offline */}
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardHeaderTitle}>⚡ MAPBOX DIRECTIONS V5 (MOTOR DE ROTAS)</Text>
+                <Text style={styles.cardHeaderTitle}>🛣️ MOTOR NATIVO OFFLINE (OPENSTREETMAP)</Text>
                 <View
                   style={[
                     styles.statusBadge,
                     {
-                      backgroundColor: mapboxConfigured
+                      backgroundColor: offlineStats.available
                         ? colors.successGhost
-                        : colors.warningGhost,
+                        : colors.dangerGhost,
                     },
                   ]}
                 >
                   <Text
                     style={[
                       styles.statusBadgeText,
-                      { color: mapboxConfigured ? colors.success : colors.warning },
+                      { color: offlineStats.available ? colors.success : colors.danger },
                     ]}
                   >
-                    {mapboxConfigured ? 'Ativo & Configurado' : 'Chave Pendente'}
+                    {offlineStats.available ? 'Ativo & 100% Offline' : 'Indisponível'}
                   </Text>
                 </View>
               </View>
 
               <DiagItem
                 label="Motor de Roteamento:"
-                value="Mapbox Directions v5 (driving-traffic)"
+                value="Bidirectional A* Nativo (OpenStreetMap)"
                 bold
                 color={colors.primary}
               />
               <DiagItem
-                label="Precisão da Polyline:"
-                value="GeoJSON 6 Casas Decimais (1 metro)"
+                label="Região Coberta:"
+                value={offlineStats.region || 'Maricá, Niterói, São Gonçalo'}
                 color={colors.success}
               />
               <DiagItem
-                label="Cota Utilizada Hoje:"
-                value={`${mapboxQuota.count} / ${mapboxQuota.limit} requisições`}
+                label="Nós Viários Indexados:"
+                value={`${offlineStats.nodesCount.toLocaleString('pt-BR')} nós`}
                 bold
-                color={mapboxQuota.isLimitReached ? colors.danger : colors.text}
               />
               <DiagItem
-                label="Cota Restante Hoje:"
-                value={`${mapboxQuota.remaining} requisições`}
+                label="Vias e Curvas Reais:"
+                value={`${offlineStats.edgesCount.toLocaleString('pt-BR')} trechos viários`}
+              />
+              <DiagItem
+                label="Custo por Rota:"
+                value="R$ 0,00 (Ilimitado e Sem Cota)"
                 bold
-                color={mapboxQuota.remaining > 500 ? colors.success : colors.warning}
-              />
-              <DiagItem
-                label="Renovação da Cota:"
-                value="Automática à meia-noite (00:00)"
-              />
-              <DiagItem
-                label="Rotas Salvas em Cache:"
-                value={`${cacheEntriesCount} rotas em memória`}
+                color={colors.success}
               />
 
-              <Pressable style={styles.actionBtn} onPress={testMapboxRoute}>
-                <Text style={styles.actionBtnText}>🧪 Testar Cálculo de Rota Mapbox (Maricá ↔ Niterói)</Text>
+              <Pressable style={styles.actionBtn} onPress={testOfflineRoute}>
+                <Zap size={16} color="#FFFFFF" />
+                <Text style={styles.actionBtnText}>Testar Cálculo de Rota Offline (Maricá ↔ Niterói)</Text>
               </Pressable>
             </View>
 
@@ -326,7 +337,7 @@ export default function DiagnosticScreen({ navigation }: Props) {
             {/* 4. MapLibre */}
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardHeaderTitle}>🗺️ MAPLIBRE</Text>
+                <Text style={styles.cardHeaderTitle}>🗺️ MAPLIBRE GPU ENGINE</Text>
                 <View style={[styles.statusBadge, { backgroundColor: colors.successGhost }]}>
                   <Text style={[styles.statusBadgeText, { color: colors.success }]}>
                     Pronto
@@ -389,128 +400,95 @@ const createStyles = (colors: any) =>
   StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.background },
     scroll: { flex: 1 },
-    content: { paddingHorizontal: spacing.lg, gap: spacing.md },
+    content: { paddingHorizontal: spacing.md, gap: spacing.md },
     topBar: {
       flexDirection: 'row',
-      alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: spacing.xs,
+      alignItems: 'center',
+      marginBottom: spacing.xs,
     },
     backBtn: {
-      backgroundColor: colors.surface,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs + 2,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      ...shadows.sm,
-    },
-    backBtnText: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: colors.primary,
-    },
-    refreshBtn: {
-      backgroundColor: colors.surface,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs + 2,
-      borderRadius: radius.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      ...shadows.sm,
-    },
-    refreshBtnText: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: colors.textSecondary,
-    },
-    btnPressed: {
-      opacity: 0.8,
-      transform: [{ scale: 0.97 }],
-    },
-    headerRow: {
       flexDirection: 'row',
       alignItems: 'center',
+      gap: spacing.xs,
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+      ...shadows.sm,
+    },
+    backBtnText: { ...typography.bodySmall, color: colors.primary, fontWeight: '600' },
+    refreshBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.xs,
+      paddingVertical: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+      ...shadows.sm,
+    },
+    refreshBtnText: { ...typography.caption, color: colors.textSecondary, fontWeight: '600' },
+    btnPressed: { opacity: 0.7 },
+    headerRow: {
+      flexDirection: 'row',
       justifyContent: 'space-between',
-      paddingVertical: spacing.sm,
+      alignItems: 'center',
+      marginBottom: spacing.xs,
     },
-    headerTitle: {
-      ...typography.displayMedium,
-      color: colors.primary,
-    },
-    headerSubtitle: {
-      ...typography.caption,
-      color: colors.textMuted,
-    },
+    headerTitle: { ...typography.headline, color: colors.text },
+    headerSubtitle: { ...typography.caption, color: colors.textMuted },
     headerBadge: {
-      width: 48,
-      height: 48,
+      width: 44,
+      height: 44,
       borderRadius: radius.md,
       backgroundColor: colors.primaryGhost,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    headerBadgeIcon: { fontSize: 24 },
-
     loadingBox: {
+      padding: spacing.xxl,
       alignItems: 'center',
-      paddingVertical: spacing.xxxl,
       gap: spacing.md,
     },
-    loadingText: {
-      ...typography.body,
-      color: colors.textMuted,
-    },
-
+    loadingText: { ...typography.bodySmall, color: colors.textMuted },
     card: {
       backgroundColor: colors.surface,
-      borderRadius: radius.md,
+      borderRadius: radius.lg,
       padding: spacing.md,
-      borderWidth: 1,
-      borderColor: colors.border,
-      gap: spacing.xs + 2,
+      gap: spacing.xs,
       ...shadows.sm,
     },
     cardHeaderRow: {
       flexDirection: 'row',
-      alignItems: 'center',
       justifyContent: 'space-between',
+      alignItems: 'center',
       marginBottom: spacing.xs,
       paddingBottom: spacing.xs,
       borderBottomWidth: 1,
-      borderBottomColor: colors.border + '66',
+      borderBottomColor: colors.border,
     },
-    cardHeaderTitle: {
-      ...typography.label,
-      color: colors.textMuted,
-      fontWeight: '800',
-      letterSpacing: 0.8,
-    },
+    cardHeaderTitle: { ...typography.label, color: colors.textSecondary },
     statusBadge: {
-      paddingHorizontal: 8,
+      paddingHorizontal: spacing.sm,
       paddingVertical: 2,
       borderRadius: radius.full,
     },
-    statusBadgeText: {
-      ...typography.caption,
-      fontSize: 11,
-      fontWeight: '700',
-    },
-
+    statusBadgeText: { ...typography.caption, fontWeight: '700' },
     actionBtn: {
-      backgroundColor: colors.primaryGhost,
-      borderRadius: radius.md,
-      paddingVertical: spacing.sm + 2,
-      paddingHorizontal: spacing.md,
+      flexDirection: 'row',
       alignItems: 'center',
-      borderWidth: 1,
-      borderColor: colors.primary + '44',
-      marginTop: spacing.xs,
+      justifyContent: 'center',
+      backgroundColor: colors.primary,
+      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.md,
+      marginTop: spacing.sm,
+      gap: spacing.xs,
     },
     actionBtnText: {
-      ...typography.caption,
+      ...typography.bodySmall,
+      color: '#FFFFFF',
       fontWeight: '700',
-      color: colors.primary,
-      textAlign: 'center',
     },
   });
