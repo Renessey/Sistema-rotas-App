@@ -9,6 +9,7 @@ import { QuickRgModal } from '../../../components/Map/QuickRgModal';
 import { StopActionsModal } from '../../../components/Map/StopActionsModal';
 import { DeliveryListsModal } from '../../../components/Deliveries/DeliveryListsModal';
 import { OfflineModal } from '../../../components/Map/OfflineModal';
+import { OptimizationSuccessModal } from '../../../components/Map/OptimizationSuccessModal';
 import type { MapType, MapTheme } from '../../../config/mapStyles';
 import type { Costing, RouteStop, LngLat } from '../../../types/geo';
 
@@ -74,6 +75,16 @@ interface MapModalsContainerProps {
   onClearPendingDownload?: () => void;
   isOfflineMode?: boolean;
   onToggleOfflineMode?: (offline: boolean) => void;
+  // Optimization result modal
+  optimizationSummary?: {
+    visible: boolean;
+    stopsCount: number;
+    packagesCount: number;
+    distanceMeters: number;
+    durationSeconds: number;
+    isOffline: boolean;
+  } | null;
+  onCloseOptimizationSummary?: () => void;
 }
 
 export function MapModalsContainer({
@@ -129,6 +140,8 @@ export function MapModalsContainer({
   onClearPendingDownload,
   isOfflineMode,
   onToggleOfflineMode,
+  optimizationSummary,
+  onCloseOptimizationSummary,
 }: MapModalsContainerProps) {
   return (
     <>
@@ -278,6 +291,20 @@ export function MapModalsContainer({
         onToggleOfflineMode={onToggleOfflineMode}
       />
 
+      {/* ── Optimization Success Modal ── */}
+      {optimizationSummary && (
+        <OptimizationSuccessModal
+          visible={optimizationSummary.visible}
+          onClose={() => onCloseOptimizationSummary?.()}
+          stopsCount={optimizationSummary.stopsCount}
+          packagesCount={optimizationSummary.packagesCount}
+          distanceMeters={optimizationSummary.distanceMeters}
+          durationSeconds={optimizationSummary.durationSeconds}
+          isOffline={isOfflineMode || optimizationSummary.isOffline}
+          onViewMap={onFitRoute}
+        />
+      )}
+
       {/* ── Loading Overlay ── */}
       {optimizing && (
         <View style={styles.loadingModalOverlay} pointerEvents="auto">
@@ -285,7 +312,9 @@ export function MapModalsContainer({
             <ActivityIndicator size="large" color="#4F46E5" />
             <Text style={styles.loadingModalTitle}>Otimizando rotas</Text>
             <Text style={styles.loadingModalSub}>
-              Calculando a melhor sequência e tempo estimado com Mapbox...
+              {isOfflineMode
+                ? 'Calculando traçado viário real via motor offline (OSM)...'
+                : 'Calculando a melhor sequência e tempo estimado com Mapbox...'}
             </Text>
           </View>
         </View>

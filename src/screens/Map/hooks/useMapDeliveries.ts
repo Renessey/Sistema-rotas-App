@@ -42,6 +42,14 @@ export function useMapDeliveries({
   const [activeStop, setActiveStop] = useState<RouteStop | null>(null);
   const [completedIds, setCompletedIds] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [optimizationSummary, setOptimizationSummary] = useState<{
+    visible: boolean;
+    stopsCount: number;
+    packagesCount: number;
+    distanceMeters: number;
+    durationSeconds: number;
+    isOffline: boolean;
+  } | null>(null);
 
   // ─── Memos de entregas e paradas ──────────────────────────────────────────
   const locatedDeliveries = useMemo(
@@ -159,40 +167,6 @@ export function useMapDeliveries({
       }
       setOptimizing(true);
       try {
-        let userCoords: LngLat | null = originOverride || null;
-
-        if (!userCoords) {
-          for (let attempt = 1; attempt <= 2; attempt++) {
-            try {
-              const freshPos = await LocationService.getCurrentPosition({
-                enableHighAccuracy: true,
-                timeout: 6000,
-                maximumAge: 0,
-              });
-              userCoords = [freshPos.longitude, freshPos.latitude];
-              setCurrentLocation(userCoords);
-              setHasGpsFix(true);
-              console.log(`[Map] GPS confirmado (tentativa ${attempt}):`, userCoords);
-              break;
-            } catch (gpsErr) {
-              console.warn(`[Map] GPS tentativa ${attempt} falhou:`, gpsErr);
-              if (attempt === 2 && currentLocation) {
-                userCoords = currentLocation;
-                console.warn('[Map] Usando última posição GPS conhecida:', userCoords);
-              }
-            }
-          }
-        }
-
-        if (!userCoords) {
-          Alert.alert(
-            'GPS Indisponível',
-            'Não foi possível obter sua localização. Ative o GPS e aguarde o sinal antes de otimizar a rota.',
-          );
-          setOptimizing(false);
-          return;
-        }
-
         const uniqueStops = groupDeliveriesIntoStops(locatedDeliveries);
         const pendingStops = uniqueStops.filter((s) => s.status !== 'completed');
 
@@ -200,6 +174,45 @@ export function useMapDeliveries({
           Alert.alert('Aviso', 'Todas as entregas já foram concluídas.');
           setOptimizing(false);
           return;
+        }
+
+        let userCoords: LngLat | null = originOverride || null;
+
+        if (!userCoords) {
+          if (currentLocation) {
+            userCoords = currentLocation;
+          } else {
+            try {
+              const freshPos = await LocationService.getCurrentPosition({
+                enableHighAccuracy: true,
+                timeout: 1200,
+                maximumAge: 10000,
+              });
+              userCoords = [freshPos.longitude, freshPos.latitude];
+              setCurrentLocation(userCoords);
+              setHasGpsFix(true);
+            } catch {
+              // Em modo offline ou sem sinal de GPS imediato, inicia a partir da 1ª parada
+              const firstLocated = locatedDeliveries.find((d) => d.longitude && d.latitude);
+              if (firstLocated) {
+                userCoords = [firstLocated.longitude!, firstLocated.latitude!];
+              }
+            }
+          }
+        }
+
+        if (!userCoords) {
+          const firstLocated = locatedDeliveries.find((d) => d.longitude && d.latitude);
+          if (firstLocated) {
+            userCoords = [firstLocated.longitude!, firstLocated.latitude!];
+          } else {
+            Alert.alert(
+              'Aviso',
+              'Não foi possível determinar o ponto de partida. Verifique suas paradas.',
+            );
+            setOptimizing(false);
+            return;
+          }
         }
 
         const stopCoordinates: LngLat[] = pendingStops.map((s) => [s.longitude, s.latitude]);
@@ -234,10 +247,19 @@ export function useMapDeliveries({
         setRouteInfo({ distance: result.distance, duration: result.duration });
         setRouteNeedsOptimization(false);
 
-        setTimeout(() => fitRoute(), 400);
+        setTimeout(() => fitRoute(), 200);
+
+        setOptimizationSummary({
+          visible: true,
+          stopsCount: pendingStops.length,
+          packagesCount: locatedDeliveries.length,
+          distanceMeters: result.distance,
+          durationSeconds: result.duration,
+          isOffline: RoutingService.isForcedOffline(),
+        });
       } catch (error) {
         console.warn('[Map] optimize failed', error);
-        Alert.alert('Erro', 'Não foi possível otimizar a rota. Verifique a conexão com a internet.');
+        Alert.alert('Aviso', 'Não foi possível otimizar a rota. Tente novamente.');
       } finally {
         setOptimizing(false);
       }
@@ -555,6 +577,8 @@ export function useMapDeliveries({
     totalStopsCount,
     totalPackagesCount,
     unlocatedCount,
+    optimizationSummary,
+    setOptimizationSummary,
     reloadDeliveries,
     fitRoute,
     optimizeRoute,

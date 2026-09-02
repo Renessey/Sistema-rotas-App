@@ -219,5 +219,6 @@ export interface RouteStop {
 
 export type RoutingProvider =
   | 'mapbox'
+  | 'valhalla_osm_offline'
   | 'local_fallback';
 

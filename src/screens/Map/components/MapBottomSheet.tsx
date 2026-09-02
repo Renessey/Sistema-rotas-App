@@ -325,9 +325,14 @@ export function MapBottomSheet({
     >
       {/* ── DRAG HEADER ── */}
       <View {...panHandlers} style={styles.dragZone}>
-        <View style={styles.handleContainer}>
+        <Pressable
+          style={styles.handleContainer}
+          onPress={onToggleSnap}
+          hitSlop={{ top: 10, bottom: 14, left: 40, right: 40 }}
+          accessibilityLabel="Expandir ou recolher lista de entregas"
+        >
           <View style={styles.handle} />
-        </View>
+        </Pressable>
 
         {/* ── Search Bar Row ── */}
         <View style={styles.searchRow}>
@@ -460,7 +465,10 @@ export function MapBottomSheet({
         renderItem={renderItem}
         ListHeaderComponent={listHeader}
         style={styles.sheetScroll}
-        contentContainerStyle={[styles.sheetScrollContent, { paddingBottom }]}
+        contentContainerStyle={[
+          styles.sheetScrollContent,
+          { paddingBottom: (sheetState === 'expanded' ? 100 : 24) + paddingBottom },
+        ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         initialNumToRender={10}

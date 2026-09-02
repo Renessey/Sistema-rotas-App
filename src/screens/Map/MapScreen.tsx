@@ -99,6 +99,8 @@ export default function MapScreen({ navigation }: Props) {
     totalStopsCount,
     totalPackagesCount,
     unlocatedCount,
+    optimizationSummary,
+    setOptimizationSummary,
     reloadDeliveries,
     fitRoute,
     optimizeRoute,
@@ -475,6 +477,8 @@ export default function MapScreen({ navigation }: Props) {
         onClearPendingDownload={() => setPendingOfflineDownload(null)}
         isOfflineMode={isOfflineMode}
         onToggleOfflineMode={updateOfflineMode}
+        optimizationSummary={optimizationSummary}
+        onCloseOptimizationSummary={() => setOptimizationSummary(null)}
       />
     </View>
   );
