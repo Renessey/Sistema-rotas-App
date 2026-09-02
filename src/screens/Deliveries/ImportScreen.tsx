@@ -410,17 +410,10 @@ export default function ImportScreen({ navigation }: Props) {
           <Text style={styles.doneMsg}>{message}</Text>
           <View style={styles.doneActions}>
             <Pressable
-              style={styles.doneSecBtn}
-              onPress={() => navigation.navigate('Deliveries')}
-            >
-              <ListOrdered size={16} color={colors.primary} />
-              <Text style={styles.doneSecBtnText}>Ver Lista</Text>
-            </Pressable>
-            <Pressable
-              style={styles.donePrimBtn}
+              style={[styles.donePrimBtn, { flex: 1 }]}
               onPress={() => navigation.navigate('Map')}
             >
-              <Map size={16} color="#FFFFFF" />
+              <Map size={18} color="#FFFFFF" />
               <Text style={styles.donePrimBtnText}>Ver no Mapa</Text>
             </Pressable>
           </View>

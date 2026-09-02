@@ -31,6 +31,7 @@ import {
   AdjustPinModal,
   NextStopHUD,
   OfflineAreaSelectorOverlay,
+  TurnByTurnNavigationOverlay,
 } from './components';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
@@ -41,7 +42,10 @@ export default function MapScreen({ navigation }: Props) {
   const insets = useSafeAreaInsets();
 
   const cameraRef = useRef<CameraRef>(null);
-  const mapRef = useRef<MapRef | null>(null); 
+  const mapRef = useRef<MapRef | null>(null);
+
+  // Estado do Modo de Navegação Passo a Passo (3D Driving Mode)
+  const [isNavigating, setIsNavigating] = useState(false);
 
   // 1. Gerenciamento de GPS & Localização
   const {
@@ -217,6 +221,66 @@ export default function MapScreen({ navigation }: Props) {
     return 0;
   }, [routeInfo, routeStops]);
 
+  // Estado de Orientação da Bússola no Modo de Navegação ('course' = segue o veículo, 'north' = norte para cima)
+  const [navigationOrientation, setNavigationOrientation] = useState<'course' | 'north'>('course');
+
+  // Iniciar Navegação Passo a Passo (3D Driving Mode com Zoom Próximo)
+  const startNavigation = React.useCallback(() => {
+    setIsNavigating(true);
+    setFollowGPS(true);
+    setNavigationOrientation('course');
+    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    if (target) {
+      cameraRef.current?.setStop({
+        center: target,
+        zoom: 19.0, // Zoom ultra-próximo focado na posição do GPS
+        pitch: 58,  // Inclinação 3D de direção
+        bearing: currentHeadingRef.current || 0,
+        duration: 800,
+      });
+    }
+  }, [currentLocation, nextStop, setFollowGPS, currentHeadingRef]);
+
+  const exitNavigation = React.useCallback(() => {
+    setIsNavigating(false);
+    cameraRef.current?.setStop({
+      pitch: 0,
+      zoom: 15,
+      bearing: 0,
+      duration: 600,
+    });
+  }, []);
+
+  // Alternar Bússola: Norte para Cima (bearing: 0) vs Seguir Curso (bearing: heading)
+  const toggleNavigationOrientation = React.useCallback(() => {
+    const nextMode = navigationOrientation === 'course' ? 'north' : 'course';
+    setNavigationOrientation(nextMode);
+    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    if (target) {
+      cameraRef.current?.setStop({
+        center: target,
+        zoom: 19.0,
+        pitch: 58,
+        bearing: nextMode === 'north' ? 0 : (currentHeadingRef.current || 0),
+        duration: 500,
+      });
+    }
+  }, [navigationOrientation, currentLocation, nextStop, currentHeadingRef]);
+
+  const recenterNavigation = React.useCallback(() => {
+    setFollowGPS(true);
+    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    if (target) {
+      cameraRef.current?.setStop({
+        center: target,
+        zoom: 19.0,
+        pitch: 58,
+        bearing: navigationOrientation === 'north' ? 0 : (currentHeadingRef.current || 0),
+        duration: 600,
+      });
+    }
+  }, [currentLocation, nextStop, setFollowGPS, navigationOrientation, currentHeadingRef]);
+
   // Bounding-box atual derivada das paradas carregadas (usada pelo OfflineModal)
   const currentMapBounds = useMemo<[number, number, number, number] | undefined>(() => {
     const located = routeStops.filter((s) => s.latitude && s.longitude);
@@ -279,122 +343,141 @@ export default function MapScreen({ navigation }: Props) {
         />
       )}
 
-      {/* ── 2.1 Next Stop Quick HUD ── */}
-      {!lassoMode && !showOfflineSelector && nextStop && (
-        <NextStopHUD
+      {/* ── MODO DE NAVEGAÇÃO ATIVA (Foto 2) ── */}
+      {isNavigating ? (
+        <TurnByTurnNavigationOverlay
           nextStop={nextStop}
-          sheetTranslateY={sheetTranslateY}
-          transExpanded={transExpanded}
-          transHalf={transHalf}
-          transCollapsed={transCollapsed}
-          onSelectStop={selectStop}
-          onCompleteStop={completeStop}
-        />
-      )}
-
-      {/* ── 2.2 Seletor Manual de Área Offline sobre o Mapa ── */}
-      {showOfflineSelector && (
-        <OfflineAreaSelectorOverlay
-          visible={showOfflineSelector}
-          mapRef={mapRef}
+          routeDistanceM={effectiveRouteDistanceM}
+          routeDurationS={routeInfo?.duration || 720}
           currentLocation={currentLocation}
-          onCenterUser={() => {
-            if (currentLocation) {
-              centerOnUser(14);
-            }
-          }}
-          onCancel={() => {
-            setShowOfflineSelector(false);
-            setShowOfflineModal(true);
-          }}
-          onConfirmArea={(name, bounds) => {
-            setPendingOfflineDownload({ name, bounds });
-            setShowOfflineSelector(false);
-            setShowOfflineModal(true);
-          }}
+          orientationMode={navigationOrientation}
+          currentHeading={currentHeadingRef.current}
+          onToggleOrientation={toggleNavigationOrientation}
+          onExitNavigation={exitNavigation}
+          onRecenter={recenterNavigation}
+          onFitRouteOverview={fitRoute}
         />
-      )}
+      ) : (
+        <>
+          {/* ── 2.1 Next Stop Quick HUD ── */}
+          {!lassoMode && !showOfflineSelector && nextStop && (
+            <NextStopHUD
+              nextStop={nextStop}
+              sheetTranslateY={sheetTranslateY}
+              transExpanded={transExpanded}
+              transHalf={transHalf}
+              transCollapsed={transCollapsed}
+              onSelectStop={selectStop}
+              onCompleteStop={completeStop}
+            />
+          )}
 
-      {/* ── 3. Controles Flutuantes da Direita ── */}
-      {!showOfflineSelector && (
-        <Animated.View
-          style={[
-            StyleSheet.absoluteFill,
-            {
-              opacity: sheetTranslateY.interpolate({
-                inputRange: [transExpanded, transHalf, transCollapsed],
-                outputRange: [0, 0.2, 1],
-                extrapolate: 'clamp',
-              }),
-              transform: [
+          {/* ── 2.2 Seletor Manual de Área Offline sobre o Mapa ── */}
+          {showOfflineSelector && (
+            <OfflineAreaSelectorOverlay
+              visible={showOfflineSelector}
+              mapRef={mapRef}
+              currentLocation={currentLocation}
+              onCenterUser={() => {
+                if (currentLocation) {
+                  centerOnUser(14);
+                }
+              }}
+              onCancel={() => {
+                setShowOfflineSelector(false);
+                setShowOfflineModal(true);
+              }}
+              onConfirmArea={(name, bounds) => {
+                setPendingOfflineDownload({ name, bounds });
+                setShowOfflineSelector(false);
+                setShowOfflineModal(true);
+              }}
+            />
+          )}
+
+          {/* ── 3. Controles Flutuantes da Direita ── */}
+          {!showOfflineSelector && (
+            <Animated.View
+              style={[
+                StyleSheet.absoluteFill,
                 {
-                  translateX: sheetTranslateY.interpolate({
+                  opacity: sheetTranslateY.interpolate({
                     inputRange: [transExpanded, transHalf, transCollapsed],
-                    outputRange: [70, 30, 0],
+                    outputRange: [0, 0.2, 1],
                     extrapolate: 'clamp',
                   }),
+                  transform: [
+                    {
+                      translateX: sheetTranslateY.interpolate({
+                        inputRange: [transExpanded, transHalf, transCollapsed],
+                        outputRange: [70, 30, 0],
+                        extrapolate: 'clamp',
+                      }),
+                    },
+                  ],
                 },
-              ],
-            },
-          ]}
-          pointerEvents={sheetState === 'expanded' ? 'none' : 'box-none'}
-        >
-          <FloatingMapControls
-            followGPS={followGPS}
-            hasRoute={!!route || routeStops.length > 0}
-            lassoMode={lassoMode}
-            diagStatus={diagStatus}
-            onOpenLayers={() => setShowLayersModal(true)}
-            onFitBounds={fitRoute}
-            onToggleFollowGPS={() => {
-              const next = !followGPS;
-              setFollowGPS(next);
-              if (currentLocation) {
-                centerOnUser(15);
-              }
-            }}
-            onToggleLasso={handleToggleLasso}
-            showFuelHUD={showFuelHUD}
-            onCloseFuelHUD={() => setShowFuelHUD(false)}
-            fuelConfig={fuelConfig}
-            routeDistanceM={effectiveRouteDistanceM}
-            onPressFuelMetrics={() => setShowConfigModal(true)}
-          />
-        </Animated.View>
-      )}
+              ]}
+              pointerEvents={sheetState === 'expanded' ? 'none' : 'box-none'}
+            >
+              <FloatingMapControls
+                followGPS={followGPS}
+                hasRoute={!!route || routeStops.length > 0}
+                lassoMode={lassoMode}
+                diagStatus={diagStatus}
+                onOpenLayers={() => setShowLayersModal(true)}
+                onFitBounds={fitRoute}
+                onToggleFollowGPS={() => {
+                  const next = !followGPS;
+                  setFollowGPS(next);
+                  if (currentLocation) {
+                    centerOnUser(15);
+                  }
+                }}
+                onToggleLasso={handleToggleLasso}
+                showFuelHUD={showFuelHUD}
+                onCloseFuelHUD={() => setShowFuelHUD(false)}
+                fuelConfig={fuelConfig}
+                routeDistanceM={effectiveRouteDistanceM}
+                onPressFuelMetrics={() => setShowConfigModal(true)}
+              />
+            </Animated.View>
+          )}
 
-      {/* ── 5. Gaveta Inferior (Bottom Sheet) ── */}
-      <MapBottomSheet
-        sheetTranslateY={sheetTranslateY}
-        snapExpanded={snapExpanded}
-        panHandlers={panResponder.panHandlers}
-        sheetState={sheetState}
-        onToggleSnap={handleToggleSnap}
-        paddingBottom={Math.max(insets.bottom, 12)}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        filteredStops={filteredStops}
-        nextStop={nextStop}
-        stopTimes={stopTimes}
-        totalStopsCount={totalStopsCount}
-        totalPackagesCount={totalPackagesCount}
-        unlocatedCount={unlocatedCount}
-        routeInfo={routeInfo}
-        optimizing={optimizing}
-        routeNeedsOptimization={routeNeedsOptimization}
-        currentLocation={currentLocation}
-        onOpenMenu={() => setShowMenuModal(true)}
-        onOpenQuickActions={() => setShowConfigModal(true)}
-        onSelectStop={selectStop}
-        onLongPressStop={openStopActions}
-        onOptimize={(origin) => optimizeRoute(origin)}
-        onCenterGps={() => centerOnUser(16)}
-        onAddStop={() => setShowAddModal(true)}
-        onNavigateImport={() => navigation.navigate('Import')}
-        onNavigateDeliveries={() => navigation.navigate('Deliveries')}
-        formatDistance={formatDistance}
-        formatDuration={formatDuration}
-      />
+          {/* ── 5. Gaveta Inferior (Bottom Sheet) ── */}
+          <MapBottomSheet
+            sheetTranslateY={sheetTranslateY}
+            snapExpanded={snapExpanded}
+            panHandlers={panResponder.panHandlers}
+            sheetState={sheetState}
+            onToggleSnap={handleToggleSnap}
+            paddingBottom={Math.max(insets.bottom, 12)}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            filteredStops={filteredStops}
+            nextStop={nextStop}
+            stopTimes={stopTimes}
+            totalStopsCount={totalStopsCount}
+            totalPackagesCount={totalPackagesCount}
+            unlocatedCount={unlocatedCount}
+            routeInfo={routeInfo}
+            optimizing={optimizing}
+            routeNeedsOptimization={routeNeedsOptimization}
+            currentLocation={currentLocation}
+            onOpenMenu={() => setShowMenuModal(true)}
+            onOpenQuickActions={() => setShowConfigModal(true)}
+            onSelectStop={selectStop}
+            onLongPressStop={openStopActions}
+            onOptimize={(origin) => optimizeRoute(origin)}
+            onStartNavigation={startNavigation}
+            onCenterGps={() => centerOnUser(16)}
+            onAddStop={() => setShowAddModal(true)}
+            onNavigateImport={() => navigation.navigate('Import')}
+            onNavigateDeliveries={() => navigation.navigate('Deliveries')}
+            formatDistance={formatDistance}
+            formatDuration={formatDuration}
+          />
+        </>
+      )}
 
       {/* ── 6. Gaveta de Detalhes da Parada Selecionada ── */}
       {activeStop && (

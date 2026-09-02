@@ -19,6 +19,7 @@ import {
   Plus,
   Zap,
   Check,
+  Navigation,
   FileSpreadsheet,
   Info,
   ChevronRight,
@@ -57,6 +58,7 @@ interface MapBottomSheetProps {
   onSelectStop: (stop: RouteStop) => void;
   onLongPressStop: (stop: RouteStop) => void;
   onOptimize: (origin?: LngLat) => void;
+  onStartNavigation?: () => void;
   onCenterGps: () => void;
   onAddStop: () => void;
   onNavigateImport: () => void;
@@ -90,6 +92,7 @@ export function MapBottomSheet({
   onSelectStop,
   onLongPressStop,
   onOptimize,
+  onStartNavigation,
   onCenterGps,
   onAddStop,
   onNavigateImport,
@@ -384,12 +387,13 @@ export function MapBottomSheet({
           </Pressable>
         </View>
 
-        {/* ── Action Buttons Bar (Otimizar Rota e Finalizar) ── */}
+        {/* ── Action Buttons Bar (Otimizar Rota, Começar e Finalizar) ── */}
         <View style={styles.sheetActionsBar}>
           <Pressable
             style={({ pressed }) => [
               styles.sheetOptBtn,
               routeNeedsOptimization && styles.sheetOptBtnActive,
+              !routeNeedsOptimization && totalStopsCount > 0 && { flex: 1 },
               pressed && styles.btnPressed,
             ]}
             onPress={() => onOptimize(currentLocation ?? undefined)}
@@ -406,20 +410,41 @@ export function MapBottomSheet({
                   fill={isDark ? (routeNeedsOptimization ? '#C7D2FE' : '#93C5FD') : '#FFFFFF'}
                 />
                 <Text style={styles.sheetOptBtnText} numberOfLines={1}>
-                  {routeNeedsOptimization ? 'Otimizar Rota' : 'Reotimizar Rota'}
+                  {routeNeedsOptimization ? 'Otimizar' : 'Reotimizar'}
                 </Text>
               </>
             )}
           </Pressable>
 
+          {/* Botão Começar (Navegação Ativa) - No Meio */}
+          {!routeNeedsOptimization && totalStopsCount > 0 && (
+            <Pressable
+              style={({ pressed }) => [
+                styles.sheetStartBtn,
+                pressed && styles.btnPressed,
+              ]}
+              onPress={onStartNavigation}
+              accessibilityLabel="Começar Navegação Passo a Passo"
+            >
+              <Navigation size={15} color="#FFFFFF" fill="#FFFFFF" />
+              <Text style={styles.sheetStartBtnText} numberOfLines={1}>
+                Começar
+              </Text>
+            </Pressable>
+          )}
+
           <Pressable
-            style={({ pressed }) => [styles.sheetFinishBtn, pressed && styles.btnPressed]}
+            style={({ pressed }) => [
+              styles.sheetFinishBtn,
+              !routeNeedsOptimization && totalStopsCount > 0 && { flex: 0.9 },
+              pressed && styles.btnPressed,
+            ]}
             onPress={handleFinishRoute}
             accessibilityLabel="Finalizar itinerário da rota"
           >
-            <Check size={15} color={isDark ? '#6EE7B7' : '#FFFFFF'} strokeWidth={2.5} />
+            <Check size={15} color={isDark ? '#CBD5E1' : '#FFFFFF'} strokeWidth={2.5} />
             <Text style={styles.sheetFinishBtnText} numberOfLines={1}>
-              Finalizar Rota
+              Finalizar
             </Text>
           </Pressable>
         </View>
