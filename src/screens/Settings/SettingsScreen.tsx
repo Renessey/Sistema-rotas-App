@@ -16,30 +16,19 @@ import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radius, shadows, typography } from '../../theme';
 import { MapStyleService } from '../../services/map/MapStyleService';
 import { DatabaseService } from '../../storage/DatabaseService';
-import { LocationService } from '../../services/gps/LocationService';
-import { RoutingService } from '../../services/routing/RoutingService';
-import { OfflineRoutingEngine } from '../../services/routing/OfflineRoutingEngine';
 import { MAP_TYPES, MAP_THEMES, MapType, MapTheme } from '../../config/mapStyles';
-import type { Costing, RoutingProvider } from '../../types/geo';
+import type { Costing } from '../../types/geo';
 import {
   ArrowLeft,
   Settings as SettingsIcon,
-  Activity,
   Layers,
   Car,
   Truck,
   Bike,
   EyeOff,
   Navigation,
-  HardDrive,
-  Cpu,
   RefreshCw,
   Trash2,
-  CheckCircle2,
-  AlertCircle,
-  FlaskConical,
-  Radio,
-  Zap,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -62,23 +51,6 @@ export default function SettingsScreen({ navigation }: Props) {
   const [costingMode, setCostingMode] = useState<Costing>('auto');
   const [stats, setStats] = useState({ total: 0, completed: 0, pending: 0, failed: 0, located: 0, invalidCoords: 0 });
 
-  // Diagnósticos
-  const [diagLoading, setDiagLoading] = useState(false);
-  const [gpsStatus, setGpsStatus] = useState<{
-    ok: boolean;
-    lat?: number;
-    lon?: number;
-    accuracy?: number | null;
-    message?: string;
-  }>({ ok: false });
-
-  const [offlineEngineInfo, setOfflineEngineInfo] = useState({
-    region: '',
-    nodesCount: 0,
-    edgesCount: 0,
-    available: false,
-  });
-
   const loadSettings = useCallback(async () => {
     const prefs = await MapStyleService.loadPreferences();
     setMapType(prefs.mapType);
@@ -86,58 +58,11 @@ export default function SettingsScreen({ navigation }: Props) {
     setHideCompleted(prefs.hideCompleted);
     setCostingMode(prefs.costingMode);
     setStats(DatabaseService.getStats());
-
-    if (OfflineRoutingEngine.isAvailable()) {
-      const meta = OfflineRoutingEngine.getRegionMetadata();
-      setOfflineEngineInfo({
-        region: meta.region,
-        nodesCount: meta.nodesCount,
-        edgesCount: meta.edgesCount,
-        available: true,
-      });
-    }
-  }, []);
-
-  const runDiagnostics = useCallback(async () => {
-    setDiagLoading(true);
-    try {
-      setStats(DatabaseService.getStats());
-    } catch {}
-
-    try {
-      const perm = await LocationService.requestPermission();
-      if (perm === 'granted') {
-        const pos = await LocationService.getCurrentPosition();
-        setGpsStatus({
-          ok: true,
-          lat: pos.latitude,
-          lon: pos.longitude,
-          accuracy: pos.accuracy,
-        });
-      } else {
-        setGpsStatus({ ok: false, message: 'Permissão de GPS negada' });
-      }
-    } catch (e: any) {
-      setGpsStatus({ ok: false, message: e?.message || 'GPS desligado' });
-    }
-
-    if (OfflineRoutingEngine.isAvailable()) {
-      const meta = OfflineRoutingEngine.getRegionMetadata();
-      setOfflineEngineInfo({
-        region: meta.region,
-        nodesCount: meta.nodesCount,
-        edgesCount: meta.edgesCount,
-        available: true,
-      });
-    }
-
-    setDiagLoading(false);
   }, []);
 
   useEffect(() => {
     loadSettings();
-    runDiagnostics();
-  }, [loadSettings, runDiagnostics]);
+  }, [loadSettings]);
 
   const handleUpdateType = async (type: MapType) => {
     setMapType(type);
@@ -157,23 +82,6 @@ export default function SettingsScreen({ navigation }: Props) {
   const handleUpdateCosting = async (mode: Costing) => {
     setCostingMode(mode);
     await MapStyleService.setCostingMode(mode);
-  };
-
-  const testRouteCalculation = async () => {
-    try {
-      const p1: [number, number] = [-42.8188, -22.9192];
-      const p2: [number, number] = [-43.1189, -22.8832];
-      const t0 = Date.now();
-      const result = await RoutingService.route([p1, p2]);
-      const delta = Date.now() - t0;
-
-      Alert.alert(
-        'Teste de Rota Offline OK! 🚀',
-        `Origem: Maricá\nDestino: Niterói\nDistância: ${(result.distance / 1000).toFixed(1)} km\nTempo estimado: ${Math.round(result.duration / 60)} min\nTempo de cálculo: ${delta} ms\nPontos de curva: ${result.geojson.features[0]?.geometry.coordinates.length}\nMotor: OpenStreetMap Nativo (100% Offline)`,
-      );
-    } catch (e: any) {
-      Alert.alert('Erro no teste de rota', e?.message || 'Falha ao calcular rota offline.');
-    }
   };
 
   const handleClearDatabase = () => {
@@ -221,7 +129,7 @@ export default function SettingsScreen({ navigation }: Props) {
 
           <Pressable
             style={({ pressed }) => [styles.refreshBtn, pressed && styles.btnPressed]}
-            onPress={runDiagnostics}
+            onPress={loadSettings}
             hitSlop={8}
           >
             <RefreshCw size={14} color={colors.textSecondary} />
@@ -233,106 +141,14 @@ export default function SettingsScreen({ navigation }: Props) {
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>Configurações</Text>
-            <Text style={styles.headerSub}>Motor de Rotas 100% Offline & Preferências</Text>
+            <Text style={styles.headerSub}>Preferências e Ajustes do Aplicativo</Text>
           </View>
           <View style={styles.headerIcon}>
             <SettingsIcon size={22} color={colors.primary} />
           </View>
         </View>
 
-        {/* 1. Status do Motor Offline OSM */}
-        <View style={styles.card}>
-          <View style={styles.cardTitleRow}>
-            <Zap size={16} color={colors.primary} />
-            <Text style={styles.sectionHeader}>MOTOR DE ROTEAMENTO NATIVO (OSM)</Text>
-          </View>
-
-          <View style={styles.providerCardActive}>
-            <View style={styles.providerLeft}>
-              <View style={styles.providerDotActive} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.providerTitle}>Motor Nativo OpenStreetMap</Text>
-                <Text style={styles.providerDesc}>
-                  Calcula rotas curva a curva e otimiza dezenas de paradas sem internet, com custo zero e sem limite de requisições.
-                </Text>
-              </View>
-            </View>
-            <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
-              <Text style={[styles.badgePillText, { color: colors.success }]}>
-                100% Ilimitado
-              </Text>
-            </View>
-          </View>
-
-          <View style={{ marginTop: spacing.sm, gap: 4 }}>
-            <DiagRow label="Região Viária:" value={offlineEngineInfo.region || 'Maricá - Niterói - SG'} color={colors.primary} bold />
-            <DiagRow label="Nós Viários Indexados:" value={`${offlineEngineInfo.nodesCount.toLocaleString('pt-BR')} nós`} />
-            <DiagRow label="Trechos com Curvas Reais:" value={`${offlineEngineInfo.edgesCount.toLocaleString('pt-BR')} vias`} />
-          </View>
-        </View>
-
-        {/* 2. Diagnóstico do Sistema */}
-        <View style={styles.card}>
-          <View style={styles.cardTitleRow}>
-            <Activity size={16} color={colors.primary} />
-            <Text style={styles.sectionHeader}>DIAGNÓSTICO DO SISTEMA</Text>
-            {diagLoading && <ActivityIndicator size="small" color={colors.primary} />}
-          </View>
-
-          {/* GPS Nativo */}
-          <View style={styles.diagSection}>
-            <View style={styles.diagHeaderRow}>
-              <View style={styles.diagTitleLeft}>
-                <Radio size={14} color={colors.textSecondary} />
-                <Text style={styles.diagSectionTitle}>GPS NATIVO DO DISPOSITIVO</Text>
-              </View>
-              <View
-                style={[
-                  styles.badgePill,
-                  { backgroundColor: gpsStatus.ok ? colors.successGhost : colors.dangerGhost },
-                ]}
-              >
-                <Text style={[styles.badgePillText, { color: gpsStatus.ok ? colors.success : colors.danger }]}>
-                  {gpsStatus.ok ? 'Sinal Ativo' : 'Aguardando'}
-                </Text>
-              </View>
-            </View>
-            {gpsStatus.ok ? (
-              <>
-                <DiagRow label="Latitude / Longitude:" value={`${gpsStatus.lat?.toFixed(5)}, ${gpsStatus.lon?.toFixed(5)}`} bold />
-                <DiagRow label="Precisão do Satélite:" value={`±${Math.round(gpsStatus.accuracy ?? 0)} metros`} color={colors.primary} />
-              </>
-            ) : (
-              <DiagRow label="Status do Sensor:" value={gpsStatus.message || 'GPS desligado ou sem permissão'} color={colors.danger} />
-            )}
-          </View>
-
-          {/* Banco SQLite */}
-          <View style={styles.diagSection}>
-            <View style={styles.diagHeaderRow}>
-              <View style={styles.diagTitleLeft}>
-                <HardDrive size={14} color={colors.textSecondary} />
-                <Text style={styles.diagSectionTitle}>BANCO DE DADOS SQLITE</Text>
-              </View>
-              <View style={[styles.badgePill, { backgroundColor: colors.successGhost }]}>
-                <Text style={[styles.badgePillText, { color: colors.success }]}>Operacional</Text>
-              </View>
-            </View>
-            <DiagRow label="Total de entregas no banco:" value={String(stats.total)} bold />
-            <DiagRow label="Entregas com coordenadas válidas:" value={String(stats.located)} color={colors.success} />
-            <DiagRow label="Entregas sem coordenadas:" value={String(stats.invalidCoords)} color={stats.invalidCoords > 0 ? colors.danger : colors.textMuted} />
-            <DiagRow label="Entregas concluídas:" value={String(stats.completed)} color={colors.success} />
-            <DiagRow label="Entregas pendentes:" value={String(stats.pending)} color={colors.warning} />
-          </View>
-
-          {/* Botão Teste de Rota */}
-          <Pressable style={styles.testRouteBtn} onPress={testRouteCalculation}>
-            <FlaskConical size={16} color={colors.primary} />
-            <Text style={styles.testRouteBtnText}>Testar Cálculo de Rota Offline (Maricá ↔ Niterói)</Text>
-          </Pressable>
-        </View>
-
-        {/* 3. Estilo e Camadas do Mapa */}
+        {/* Estilo e Camadas do Mapa */}
         <View style={styles.card}>
           <View style={styles.cardTitleRow}>
             <Layers size={16} color={colors.primary} />
@@ -426,7 +242,10 @@ export default function SettingsScreen({ navigation }: Props) {
             <Trash2 size={16} color={colors.danger} />
             <Text style={[styles.sectionHeader, { color: colors.danger }]}>DADOS & LIMPEZA</Text>
           </View>
-          <DiagRow label="Total de entregas salvas:" value={String(stats.total)} bold />
+          <View style={styles.dataStatsRow}>
+            <Text style={styles.dataStatsLabel}>Total de entregas salvas:</Text>
+            <Text style={styles.dataStatsValue}>{stats.total}</Text>
+          </View>
 
           <Pressable style={styles.dangerBtn} onPress={handleClearDatabase}>
             <Trash2 size={15} color={colors.danger} />
@@ -437,53 +256,12 @@ export default function SettingsScreen({ navigation }: Props) {
         {/* Informações da Versão */}
         <View style={styles.footerInfo}>
           <Text style={styles.footerText}>RotaSimples v2.1</Text>
-          <Text style={styles.footerSubText}>Motor Nativo Offline OpenStreetMap + MapLibre</Text>
+          <Text style={styles.footerSubText}>Navegação Inteligente & MapLibre</Text>
         </View>
       </ScrollView>
     </View>
   );
 }
-
-function DiagRow({
-  label,
-  value,
-  bold,
-  color,
-}: {
-  label: string;
-  value: string;
-  bold?: boolean;
-  color?: string;
-}) {
-  const { colors } = useTheme();
-  return (
-    <View style={diagStyles.row}>
-      <Text style={[diagStyles.label, { color: colors.textMuted }]}>{label}</Text>
-      <Text
-        style={[
-          diagStyles.value,
-          { color: color || colors.text },
-          bold && diagStyles.valueBold,
-        ]}
-      >
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-const diagStyles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    paddingVertical: 2,
-    gap: spacing.sm,
-  },
-  label: { ...typography.caption, flex: 1 },
-  value: { ...typography.caption, fontWeight: '500', textAlign: 'right', flex: 1.2 },
-  valueBold: { fontWeight: '700' },
-});
 
 const createStyles = (colors: any) =>
   StyleSheet.create({
@@ -777,6 +555,21 @@ const createStyles = (colors: any) =>
     rowSub: {
       ...typography.caption,
       color: colors.textMuted,
+    },
+    dataStatsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: spacing.xs,
+    },
+    dataStatsLabel: {
+      fontSize: 13,
+      color: colors.textSecondary,
+    },
+    dataStatsValue: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: colors.text,
     },
     dangerBtn: {
       flexDirection: 'row',

@@ -30,11 +30,24 @@ export interface LocationError {
   nativeCode?: number;
 }
 
+try {
+  Geolocation.setRNConfiguration({
+    skipPermissionRequests: false,
+    authorizationLevel: 'whenInUse',
+    locationProvider: 'playServices',
+    enableBackgroundLocationUpdates: false,
+  });
+} catch {
+  // Ignora se não for suportado na plataforma atual
+}
+
 const DEFAULT_OPTIONS: GeolocationOptions = {
   enableHighAccuracy: true,
-  timeout: 15000,
-  maximumAge: 10000,
+  timeout: 10000,
+  maximumAge: 0,
   distanceFilter: 0,
+  interval: 500,
+  fastestInterval: 250,
 };
 
 const ERROR_CODE_MAP: Record<number, LocationErrorCode> = {

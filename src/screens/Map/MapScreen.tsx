@@ -1,9 +1,10 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { CameraRef, MapRef } from '@maplibre/maplibre-react-native';
 import type { RootStackParamList } from '../../navigation';
+import type { GeoJSONFeatureCollection, LngLat } from '../../types/geo';
 import { useTheme } from '../../theme/ThemeContext';
 import { createScreenStyles } from './MapScreenStyles';
 import { FloatingMapControls } from '../../components/Map/FloatingMapControls';
@@ -14,11 +15,13 @@ import { formatDistance, formatDuration } from './utils/mapUtils';
 // ─── Camada de Lógica / Hooks ("Backend") ────────────────────────────────────
 import {
   useMapLocation,
+  getRouteBearing,
   useMapPreferences,
   useMapDeliveries,
   useMapLasso,
   useMapBottomSheet,
   useMapModals,
+  useSmoothLocation,
 } from './hooks';
 
 // ─── Camada Visual / Componentes ("Frontend") ────────────────────────────────
@@ -36,6 +39,13 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Map'>;
 
+function fastDistance(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  const dLat = (lat2 - lat1) * 111139;
+  const avgLat = ((lat1 + lat2) * Math.PI) / 360;
+  const dLon = (lon2 - lon1) * 111139 * Math.cos(avgLat);
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
 export default function MapScreen({ navigation }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => createScreenStyles(colors), [colors]);
@@ -46,6 +56,39 @@ export default function MapScreen({ navigation }: Props) {
 
   // Estado do Modo de Navegação Passo a Passo (3D Driving Mode)
   const [isNavigating, setIsNavigating] = useState(false);
+  const [navigationOrientation, setNavigationOrientation] = useState<'course' | 'north'>('course');
+
+  // Gerenciador de Modais
+  const {
+    showLayersModal,
+    setShowLayersModal,
+    showAddModal,
+    setShowAddModal,
+    showMenuModal,
+    setShowMenuModal,
+    showListsModal,
+    setShowListsModal,
+    showQuickActionsModal,
+    setShowQuickActionsModal,
+    showQuickRgModal,
+    setShowQuickRgModal,
+    showStopActionsModal,
+    setShowStopActionsModal,
+    selectedStopForActions,
+    setSelectedStopForActions,
+    openStopActions,
+    closeStopActions,
+    showConfigModal,
+    setShowConfigModal,
+    showAdjustPinModal,
+    adjustingStop,
+    openAdjustPin,
+    closeAdjustPin,
+    showOfflineModal,
+    setShowOfflineModal,
+  } = useMapModals();
+
+  const routeRef = useRef<GeoJSONFeatureCollection | null>(null);
 
   // 1. Gerenciamento de GPS & Localização
   const {
@@ -56,9 +99,25 @@ export default function MapScreen({ navigation }: Props) {
     setFollowGPS,
     setZoom,
     diagStatus,
+    heading,
+    setHeading,
     currentHeadingRef,
     centerOnUser,
-  } = useMapLocation(cameraRef);
+  } = useMapLocation(cameraRef, isNavigating, navigationOrientation, routeRef);
+
+  // Interpolação suave a 60 FPS (elimina "pingando" e alinha bússola/seta)
+  const cameraBearing = navigationOrientation === 'north' ? 0 : heading;
+  const {
+    smoothLocation,
+    smoothHeading,
+    markerRotation,
+  } = useSmoothLocation({
+    rawLocation: currentLocation,
+    rawHeading: heading,
+    cameraBearing,
+    isNavigating,
+    navigationOrientation,
+  });
 
   // 2. Preferências do Mapa & Combustível
   const {
@@ -125,6 +184,7 @@ export default function MapScreen({ navigation }: Props) {
     setCurrentLocation,
     setHasGpsFix,
     currentHeadingRef,
+    onStopCompleted: () => setShowQuickRgModal(true),
   });
 
   // 4. Multi-Lasso Tool (Seleção geométrica livre)
@@ -168,36 +228,7 @@ export default function MapScreen({ navigation }: Props) {
     handleToggleSnap,
   } = useMapBottomSheet();
 
-  // 6. Gerenciador de Modais
-  const {
-    showLayersModal,
-    setShowLayersModal,
-    showAddModal,
-    setShowAddModal,
-    showMenuModal,
-    setShowMenuModal,
-    showListsModal,
-    setShowListsModal,
-    showQuickActionsModal,
-    setShowQuickActionsModal,
-    showQuickRgModal,
-    setShowQuickRgModal,
-    showStopActionsModal,
-    setShowStopActionsModal,
-    selectedStopForActions,
-    setSelectedStopForActions,
-    openStopActions,
-    showConfigModal,
-    setShowConfigModal,
-    showAdjustPinModal,
-    adjustingStop,
-    openAdjustPin,
-    closeAdjustPin,
-    showOfflineModal,
-    setShowOfflineModal,
-  } = useMapModals();
-
-  // 7. Seletor Manual de Área Offline sobre o Mapa
+  // 6. Seletor Manual de Área Offline sobre o Mapa
   const [showOfflineSelector, setShowOfflineSelector] = useState(false);
   const [pendingOfflineDownload, setPendingOfflineDownload] = useState<{
     name: string;
@@ -221,65 +252,155 @@ export default function MapScreen({ navigation }: Props) {
     return 0;
   }, [routeInfo, routeStops]);
 
-  // Estado de Orientação da Bússola no Modo de Navegação ('course' = segue o veículo, 'north' = norte para cima)
-  const [navigationOrientation, setNavigationOrientation] = useState<'course' | 'north'>('course');
-
-  // Iniciar Navegação Passo a Passo (3D Driving Mode com Zoom Próximo)
+  // Iniciar Navegação Passo a Passo (3D Driving Mode com Zoom de Rua e Rotação de frente para a polyline)
   const startNavigation = React.useCallback(() => {
     setIsNavigating(true);
     setFollowGPS(true);
     setNavigationOrientation('course');
-    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    const target = smoothLocation || currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
     if (target) {
+      const activeR = route;
+      const routeCoords = (activeR?.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+      const initialBearing = routeCoords.length >= 2
+        ? (getRouteBearing(target, routeCoords, 22) ?? 0)
+        : (currentHeadingRef.current || 0);
+
+      currentHeadingRef.current = initialBearing;
+      setHeading(initialBearing);
+
       cameraRef.current?.setStop({
         center: target,
-        zoom: 19.0, // Zoom ultra-próximo focado na posição do GPS
-        pitch: 58,  // Inclinação 3D de direção
-        bearing: currentHeadingRef.current || 0,
+        zoom: 18.5, // Foco aproximado de rua
+        pitch: 55,  // Inclinação 3D de direção para frente
+        bearing: initialBearing,
         duration: 800,
       });
     }
-  }, [currentLocation, nextStop, setFollowGPS, currentHeadingRef]);
+  }, [smoothLocation, currentLocation, nextStop, setFollowGPS, route, currentHeadingRef, setHeading]);
 
   const exitNavigation = React.useCallback(() => {
     setIsNavigating(false);
     cameraRef.current?.setStop({
       pitch: 0,
-      zoom: 15,
+      zoom: 18.5,
       bearing: 0,
       duration: 600,
     });
   }, []);
 
-  // Alternar Bússola: Norte para Cima (bearing: 0) vs Seguir Curso (bearing: heading)
+  // Alternar Bússola: Norte para Cima (bearing: 0) vs Seguir Curso da Polyline (bearing: routeBearing)
   const toggleNavigationOrientation = React.useCallback(() => {
     const nextMode = navigationOrientation === 'course' ? 'north' : 'course';
     setNavigationOrientation(nextMode);
-    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    const target = smoothLocation || currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
     if (target) {
+      const activeR = route;
+      const routeCoords = (activeR?.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+      const rBearing = routeCoords.length >= 2
+        ? (getRouteBearing(target, routeCoords, 22) ?? currentHeadingRef.current ?? 0)
+        : (currentHeadingRef.current || 0);
+
       cameraRef.current?.setStop({
         center: target,
-        zoom: 19.0,
-        pitch: 58,
-        bearing: nextMode === 'north' ? 0 : (currentHeadingRef.current || 0),
+        zoom: 18.5,
+        pitch: nextMode === 'north' ? 0 : 55,
+        bearing: nextMode === 'north' ? 0 : rBearing,
         duration: 500,
       });
     }
-  }, [navigationOrientation, currentLocation, nextStop, currentHeadingRef]);
+  }, [navigationOrientation, smoothLocation, currentLocation, nextStop, route, currentHeadingRef]);
 
   const recenterNavigation = React.useCallback(() => {
     setFollowGPS(true);
-    const target = currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
+    const target = smoothLocation || currentLocation || (nextStop ? [nextStop.longitude, nextStop.latitude] : undefined);
     if (target) {
+      const activeR = route;
+      const routeCoords = (activeR?.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+      const rBearing = routeCoords.length >= 2
+        ? (getRouteBearing(target, routeCoords, 22) ?? currentHeadingRef.current ?? 0)
+        : (currentHeadingRef.current || 0);
+
+      currentHeadingRef.current = rBearing;
+      setHeading(rBearing);
+
       cameraRef.current?.setStop({
         center: target,
-        zoom: 19.0,
-        pitch: 58,
-        bearing: navigationOrientation === 'north' ? 0 : (currentHeadingRef.current || 0),
+        zoom: 18.5,
+        pitch: 55,
+        bearing: navigationOrientation === 'north' ? 0 : rBearing,
         duration: 600,
       });
     }
-  }, [currentLocation, nextStop, setFollowGPS, navigationOrientation, currentHeadingRef]);
+  }, [smoothLocation, currentLocation, nextStop, setFollowGPS, navigationOrientation, route, currentHeadingRef, setHeading]);
+
+  // ─── Polyline Dinâmica em Navegação ───
+  // Corta a polyline para começar na posição GPS exata do veículo enquanto ele anda na rota
+  const dynamicRoute = useMemo<GeoJSONFeatureCollection | null>(() => {
+    if (!route || !isNavigating || !currentLocation) return route;
+    const coords = (route.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+    if (coords.length < 2) return route;
+
+    let closestIdx = 0;
+    let minDist = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = fastDistance(currentLocation[0], currentLocation[1], coords[i][0], coords[i][1]);
+      if (d < minDist) {
+        minDist = d;
+        closestIdx = i;
+      }
+    }
+
+    // Se estiver a menos de 40 metros da rota, conecta o GPS aos pontos futuros da polyline
+    if (minDist <= 40) {
+      const remainingCoords = coords.slice(closestIdx + 1);
+      const sliced = [currentLocation, ...remainingCoords];
+      if (sliced.length >= 2) {
+        return {
+          type: 'FeatureCollection',
+          features: [
+            {
+              ...route.features[0],
+              geometry: {
+                type: 'LineString',
+                coordinates: sliced,
+              },
+            },
+          ],
+        };
+      }
+    }
+
+    return route;
+  }, [route, isNavigating, currentLocation]);
+
+  // Sincroniza a referência da rota para o hook useMapLocation orientar a câmera pela polyline
+  routeRef.current = dynamicRoute || route;
+
+  // ─── Recálculo Silencioso e Instantâneo se Sair da Rota ───
+  const lastRerouteTimeRef = useRef(0);
+  useEffect(() => {
+    if (!isNavigating || !currentLocation || !route) return;
+    const coords = (route.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+    if (coords.length < 2) return;
+
+    let minDist = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = fastDistance(currentLocation[0], currentLocation[1], coords[i][0], coords[i][1]);
+      if (d < minDist) {
+        minDist = d;
+      }
+    }
+
+    // Se o motorista entrou em outra rua (> 45m de distância da polyline atual)
+    if (minDist > 45) {
+      const now = Date.now();
+      if (now - lastRerouteTimeRef.current > 2500) {
+        lastRerouteTimeRef.current = now;
+        // Recálculo silencioso e instantâneo em segundo plano
+        recalculateRoute();
+      }
+    }
+  }, [isNavigating, currentLocation, route, recalculateRoute]);
 
   // Bounding-box atual derivada das paradas carregadas (usada pelo OfflineModal)
   const currentMapBounds = useMemo<[number, number, number, number] | undefined>(() => {
@@ -315,15 +436,17 @@ export default function MapScreen({ navigation }: Props) {
         followGPS={followGPS}
         setFollowGPS={setFollowGPS}
         setZoom={setZoom}
-        route={route}
+        route={dynamicRoute}
         geoLassoLoops={geoLassoLoops}
-        currentLocation={currentLocation}
+        currentLocation={smoothLocation || currentLocation}
         routeStops={routeStops}
         hideCompleted={hideCompleted}
         nextStop={nextStop}
         activeStop={activeStop}
         lassoSelectedStopKeys={lassoSelectedStopKeys}
         selectStop={selectStop}
+        isNavigating={isNavigating}
+        currentHeading={markerRotation}
       />
 
       {/* ── 2. Multi-Lasso Overlay ── */}
@@ -349,9 +472,10 @@ export default function MapScreen({ navigation }: Props) {
           nextStop={nextStop}
           routeDistanceM={effectiveRouteDistanceM}
           routeDurationS={routeInfo?.duration || 720}
-          currentLocation={currentLocation}
+          currentLocation={smoothLocation || currentLocation}
+          route={dynamicRoute}
           orientationMode={navigationOrientation}
-          currentHeading={currentHeadingRef.current}
+          currentHeading={smoothHeading}
           onToggleOrientation={toggleNavigationOrientation}
           onExitNavigation={exitNavigation}
           onRecenter={recenterNavigation}
@@ -469,7 +593,7 @@ export default function MapScreen({ navigation }: Props) {
             onLongPressStop={openStopActions}
             onOptimize={(origin) => optimizeRoute(origin)}
             onStartNavigation={startNavigation}
-            onCenterGps={() => centerOnUser(16)}
+            onCenterGps={() => centerOnUser(18.5)}
             onAddStop={() => setShowAddModal(true)}
             onNavigateImport={() => navigation.navigate('Import')}
             onNavigateDeliveries={() => navigation.navigate('Deliveries')}

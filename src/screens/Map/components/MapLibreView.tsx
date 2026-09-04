@@ -33,6 +33,8 @@ interface MapLibreViewProps {
   activeStop: RouteStop | null;
   lassoSelectedStopKeys: Set<string>;
   selectStop: (stop: RouteStop) => void;
+  isNavigating?: boolean;
+  currentHeading?: number | null;
 }
 
 export function MapLibreView({
@@ -52,6 +54,8 @@ export function MapLibreView({
   activeStop,
   lassoSelectedStopKeys,
   selectStop,
+  isNavigating = false,
+  currentHeading = 0,
 }: MapLibreViewProps) {
   // ─── GeoJSON Strings (memoizados) ─────────────────────────────────────────
   const routeGeoJsonString = useMemo(() => {
@@ -119,6 +123,11 @@ export function MapLibreView({
       mapStyle={currentStyleUrl}
       compass={false}
       scaleBar={false}
+      onRegionIsChanging={(e) => {
+        if (e.nativeEvent.userInteraction && followGPS) {
+          setFollowGPS(false);
+        }
+      }}
       onRegionDidChange={(e) => {
         setZoom(e.nativeEvent.zoom);
         if (e.nativeEvent.userInteraction && followGPS) {
@@ -199,7 +208,7 @@ export function MapLibreView({
         );
       })}
 
-      {/* Current User Marker */}
+      {/* Current User Marker (Bolinha clássica de localização) */}
       {currentLocation && (
         <Marker id="user-location" lngLat={currentLocation} anchor="center">
           <View style={styles.userMarkerRing}>

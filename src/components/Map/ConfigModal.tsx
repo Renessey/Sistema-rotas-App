@@ -40,7 +40,7 @@ interface ConfigModalProps {
   routeDurationMin?: number;
 }
 
-type SubModal = null | 'docs' | 'reoptimize' | 'fuel';
+type SubModal = null | 'docs' | 'fuel';
 
 function generateRandomRg(): { raw: string; formatted: string } {
   const num = Math.floor(10000000 + Math.random() * 90000000).toString();
@@ -197,58 +197,6 @@ export function ConfigModal({
     );
   }
 
-  // ─── Sub-modal: Reotimizar Rota ──────────────────────────────────────────
-  if (subModal === 'reoptimize') {
-    return (
-      <Modal visible transparent animationType="fade" onRequestClose={() => setSubModal(null)}>
-        <View style={styles.overlay}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setSubModal(null)} />
-          <View style={[styles.subCard, { paddingBottom: Math.max(insets.bottom, 16) + 8 }]}>
-            <View style={styles.subHeader}>
-              <View style={[styles.iconWrap, { backgroundColor: colors.primaryGhost }]}>
-                <Zap size={20} color={colors.primary} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.subTitle}>Reotimizar Rota</Text>
-                <Text style={styles.subSubtitle}>Recalcular a ordem das paradas</Text>
-              </View>
-              <Pressable style={styles.closeBtn} onPress={() => setSubModal(null)} hitSlop={8}>
-                <X size={16} color={colors.textMuted} />
-              </Pressable>
-            </View>
-
-            <View style={styles.docsInfoBox}>
-              <Zap size={16} color={colors.primary} />
-              <Text style={[styles.docsInfoText, { color: colors.primary }]}>
-                A rota será recalculada com base na sua posição GPS atual e nas paradas pendentes.
-              </Text>
-            </View>
-
-            <View style={styles.twoButtonRow}>
-              <Pressable
-                style={styles.cancelBtn}
-                onPress={() => setSubModal(null)}
-              >
-                <Text style={styles.cancelBtnText}>Não, cancelar</Text>
-              </Pressable>
-              <Pressable
-                style={styles.primaryBtn}
-                onPress={() => {
-                  setSubModal(null);
-                  onClose();
-                  onReoptimize();
-                }}
-              >
-                <Zap size={16} color="#FFFFFF" />
-                <Text style={styles.primaryBtnText}>Sim, reotimizar</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    );
-  }
-
   // ─── Sub-modal: Consumo de Combustível ──────────────────────────────────
   if (subModal === 'fuel') {
     const kmL = parseFloat(fuelConfig.kmPerLiter.replace(',', '.')) || 0;
@@ -373,21 +321,6 @@ export function ConfigModal({
               <View style={styles.menuTextWrap}>
                 <Text style={styles.menuItemTitle}>Gerar Documentos (RG)</Text>
                 <Text style={styles.menuItemSub}>Gera número de RG aleatório na tela</Text>
-              </View>
-              <ChevronRight size={18} color={colors.textDisabled} />
-            </Pressable>
-
-            {/* Reotimizar Rota */}
-            <Pressable
-              style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
-              onPress={() => setSubModal('reoptimize')}
-            >
-              <View style={[styles.menuIconWrap, { backgroundColor: colors.primaryGhost }]}>
-                <Zap size={20} color={colors.primary} />
-              </View>
-              <View style={styles.menuTextWrap}>
-                <Text style={styles.menuItemTitle}>Reotimizar Rota</Text>
-                <Text style={styles.menuItemSub}>Recalcula a melhor ordem das paradas</Text>
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>

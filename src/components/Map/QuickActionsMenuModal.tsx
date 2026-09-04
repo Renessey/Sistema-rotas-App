@@ -11,7 +11,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { radius, shadows, spacing, typography } from '../../theme';
 import {
-  RotateCcw,
   Share2,
   X,
 } from 'lucide-react-native';
@@ -51,16 +50,6 @@ export function QuickActionsMenuModal({
   if (!visible) return null;
 
   const menuItems = [
-    {
-      id: 'reoptimize',
-      title: 'REOTIMIZAR ROTA',
-      icon: RotateCcw,
-      iconColor: '#10B981',
-      onPress: () => {
-        onClose();
-        onReoptimize();
-      },
-    },
     {
       id: 'share',
       title: 'COMPARTILHAR ROTA',

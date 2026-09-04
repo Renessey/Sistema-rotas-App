@@ -22,6 +22,7 @@ interface UseMapDeliveriesProps {
   setCurrentLocation: (loc: LngLat) => void;
   setHasGpsFix: (fix: boolean) => void;
   currentHeadingRef: React.MutableRefObject<number | null>;
+  onStopCompleted?: () => void;
 }
 
 export function useMapDeliveries({
@@ -31,6 +32,7 @@ export function useMapDeliveries({
   setCurrentLocation,
   setHasGpsFix,
   currentHeadingRef,
+  onStopCompleted,
 }: UseMapDeliveriesProps) {
   const [deliveries, setDeliveries] = useState<DeliveryEntity[]>([]);
   const [order, setOrder] = useState<number[]>([]);
@@ -98,17 +100,16 @@ export function useMapDeliveries({
   );
 
   const stopTimes = useMemo(() => {
-    const baseHour = 2;
-    let baseMinute = 3;
-    return filteredStops.map((_, i) => {
-      if (i === 0) baseMinute = 3;
-      else if (i === 1) baseMinute = 8;
-      else if (i === 2) baseMinute = 24;
-      else if (i === 3) baseMinute = 28;
-      else if (i === 4) baseMinute = 30;
-      else baseMinute += 6;
-      const hourStr = String(baseHour).padStart(2, '0');
-      const minStr = String(baseMinute % 60).padStart(2, '0');
+    const now = new Date();
+    let accumulatedMinutes = 10; // Margem de atraso inicial (10 min)
+    return filteredStops.map((stop, i) => {
+      if (stop.status === 'completed') {
+        return 'Entregue';
+      }
+      accumulatedMinutes += 7 + (i === 0 ? 3 : 5);
+      const arrival = new Date(now.getTime() + accumulatedMinutes * 60 * 1000);
+      const hourStr = String(arrival.getHours()).padStart(2, '0');
+      const minStr = String(arrival.getMinutes()).padStart(2, '0');
       return `${hourStr}:${minStr}`;
     });
   }, [filteredStops]);
@@ -166,6 +167,9 @@ export function useMapDeliveries({
         return;
       }
       setOptimizing(true);
+      // Libera o event loop do JS para o React renderizar imediatamente o feedback visual de carregamento
+      await new Promise<void>((resolve) => setTimeout(() => resolve(), 25));
+
       try {
         const uniqueStops = groupDeliveriesIntoStops(locatedDeliveries);
         const pendingStops = uniqueStops.filter((s) => s.status !== 'completed');
@@ -185,8 +189,8 @@ export function useMapDeliveries({
             try {
               const freshPos = await LocationService.getCurrentPosition({
                 enableHighAccuracy: true,
-                timeout: 1200,
-                maximumAge: 10000,
+                timeout: 800,
+                maximumAge: 15000,
               });
               userCoords = [freshPos.longitude, freshPos.latitude];
               setCurrentLocation(userCoords);
@@ -243,8 +247,17 @@ export function useMapDeliveries({
           costing: costingMode,
           heading: currentHeadingRef.current,
         });
+
+        // Cálculo do tempo estimado total:
+        // Tempo de trajeto + 10 min de atraso/tolerância + tempo de cada parada (7 min por parada)
+        // Uma rota de 40 a 50 paradas resulta em ~6h a 7h de jornada diária
+        const baseDelaySeconds = 10 * 60; // 10 min
+        const perStopServiceSeconds = 7 * 60; // 7 min por parada
+        const totalEstimatedDuration =
+          result.duration + baseDelaySeconds + pendingStops.length * perStopServiceSeconds;
+
         setRoute(result.geojson);
-        setRouteInfo({ distance: result.distance, duration: result.duration });
+        setRouteInfo({ distance: result.distance, duration: totalEstimatedDuration });
         setRouteNeedsOptimization(false);
 
         setTimeout(() => fitRoute(), 200);
@@ -254,7 +267,7 @@ export function useMapDeliveries({
           stopsCount: pendingStops.length,
           packagesCount: locatedDeliveries.length,
           distanceMeters: result.distance,
-          durationSeconds: result.duration,
+          durationSeconds: totalEstimatedDuration,
           isOffline: RoutingService.isForcedOffline(),
         });
       } catch (error) {
@@ -276,53 +289,50 @@ export function useMapDeliveries({
   );
 
   // ─── Recalcular Rota ──────────────────────────────────────────────────────
-  const recalculateRoute = useCallback(async () => {
-    const remainingStops = routeStops.filter((s) => s.status !== 'completed');
-    if (remainingStops.length === 0) {
-      setRoute(null);
-      setRouteInfo(null);
-      return;
-    }
-
-    try {
-      let userCoords: LngLat | null = null;
-      try {
-        const freshPos = await LocationService.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 6000,
-          maximumAge: 0,
-        });
-        userCoords = [freshPos.longitude, freshPos.latitude];
-        setCurrentLocation(userCoords);
-        setHasGpsFix(true);
-      } catch {
-        userCoords = currentLocation;
+  const recalculateRoute = useCallback(
+    async (customStops?: RouteStop[]) => {
+      const stopsToUse = customStops || routeStops;
+      const remainingStops = stopsToUse.filter((s) => s.status !== 'completed');
+      if (remainingStops.length === 0) {
+        setRoute(null);
+        setRouteInfo(null);
+        return;
       }
 
-      if (!userCoords) return;
+      try {
+        const userCoords: LngLat | null =
+          currentLocation || (remainingStops[0] ? [remainingStops[0].longitude, remainingStops[0].latitude] : null);
 
-      const waypoints: LngLat[] = [
-        userCoords,
-        ...remainingStops.map((s) => [s.longitude, s.latitude] as LngLat),
-      ];
+        if (!userCoords) return;
 
-      const result = await RoutingService.route(waypoints, {
-        costing: costingMode,
-        heading: currentHeadingRef.current,
-      });
-      setRoute(result.geojson);
-      setRouteInfo({ distance: result.distance, duration: result.duration });
-    } catch (e) {
-      console.warn('[Map] recalculateRoute error', e);
-    }
-  }, [
-    routeStops,
-    currentLocation,
-    costingMode,
-    currentHeadingRef,
-    setCurrentLocation,
-    setHasGpsFix,
-  ]);
+        const waypoints: LngLat[] = [
+          userCoords,
+          ...remainingStops.map((s) => [s.longitude, s.latitude] as LngLat),
+        ];
+
+        const result = await RoutingService.route(waypoints, {
+          costing: costingMode,
+          heading: currentHeadingRef.current,
+        });
+
+        const baseDelaySeconds = 10 * 60;
+        const perStopServiceSeconds = 7 * 60;
+        const totalEstimatedDuration =
+          result.duration + baseDelaySeconds + remainingStops.length * perStopServiceSeconds;
+
+        setRoute(result.geojson);
+        setRouteInfo({ distance: result.distance, duration: totalEstimatedDuration });
+      } catch (e) {
+        console.warn('[Map] recalculateRoute error', e);
+      }
+    },
+    [
+      routeStops,
+      currentLocation,
+      costingMode,
+      currentHeadingRef,
+    ],
+  );
 
   // ─── Ações de Parada ──────────────────────────────────────────────────────
   const selectStop = useCallback(
@@ -330,7 +340,7 @@ export function useMapDeliveries({
       setActiveStop(stop);
       cameraRef.current?.setStop({
         center: [stop.longitude, stop.latitude],
-        zoom: 16,
+        zoom: 18.5,
         duration: 600,
       });
     },
@@ -373,9 +383,16 @@ export function useMapDeliveries({
       );
       setCompletedIds(completed);
       setActiveStop(null);
-      recalculateRoute();
+
+      // Reotimiza instantaneamente a rota no mapa para as paradas restantes
+      const updatedLocated = reloaded.filter((d) => d.latitude !== null && d.longitude !== null);
+      const updatedStops = groupDeliveriesIntoStops(updatedLocated);
+      recalculateRoute(updatedStops);
+
+      // Abre imediatamente o modal gerador de documentos na tela
+      onStopCompleted?.();
     },
-    [recalculateRoute],
+    [recalculateRoute, onStopCompleted],
   );
 
   const skipStop = useCallback(

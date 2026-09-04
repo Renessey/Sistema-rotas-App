@@ -17,7 +17,6 @@ import {
   Route as RouteIcon,
   Compass,
   ArrowRight,
-  ShieldCheck,
 } from 'lucide-react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { radius, shadows, spacing, typography } from '../../theme';
@@ -146,15 +145,6 @@ export function OptimizationSuccessModal({
           <Text style={styles.subtitle}>
             Seu itinerário foi recalculado com sucesso pela menor distância e tempo.
           </Text>
-
-          {/* ── Engine Badge (Offline OSM) ── */}
-          <View style={styles.modeBadge}>
-            <View style={[styles.modeDot, styles.modeDotOffline]} />
-            <Text style={styles.modeBadgeText}>
-              Motor Nativo Offline (OpenStreetMap)
-            </Text>
-            <ShieldCheck size={13} color="#10B981" />
-          </View>
 
           {/* ── Metrics Cards Grid ── */}
           <View style={styles.metricsGrid}>
@@ -287,37 +277,9 @@ const createStyles = (colors: any, isDark: boolean) =>
       color: colors.textMuted,
       textAlign: 'center',
       marginTop: 4,
-      marginBottom: spacing.md,
+      marginBottom: spacing.lg,
       paddingHorizontal: spacing.sm,
       lineHeight: 18,
-    },
-    modeBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      backgroundColor: isDark ? 'rgba(16, 185, 129, 0.12)' : 'rgba(16, 185, 129, 0.08)',
-      paddingHorizontal: spacing.md,
-      paddingVertical: 6,
-      borderRadius: radius.full,
-      gap: 6,
-      borderWidth: 1,
-      borderColor: 'rgba(16, 185, 129, 0.25)',
-      marginBottom: spacing.lg,
-    },
-    modeDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-    },
-    modeDotOffline: {
-      backgroundColor: '#10B981',
-    },
-    modeDotOnline: {
-      backgroundColor: '#3B82F6',
-    },
-    modeBadgeText: {
-      fontSize: 11,
-      fontWeight: '700',
-      color: isDark ? '#6EE7B7' : '#059669',
     },
     metricsGrid: {
       flexDirection: 'row',

@@ -13,8 +13,6 @@ import {
 import {
   Menu,
   Search,
-  ScanLine,
-  Mic,
   SlidersHorizontal,
   Plus,
   Zap,
@@ -359,18 +357,6 @@ export function MapBottomSheet({
               returnKeyType="search"
               clearButtonMode="while-editing"
             />
-            <Pressable
-              onPress={() => Alert.alert('Escanear', 'Leitor de código de barras / QR Code')}
-              hitSlop={6}
-            >
-              <ScanLine size={16} color={colors.textMuted} />
-            </Pressable>
-            <Pressable
-              onPress={() => Alert.alert('Voz', 'Comando por voz')}
-              hitSlop={6}
-            >
-              <Mic size={16} color={colors.textMuted} />
-            </Pressable>
           </View>
 
           <Pressable

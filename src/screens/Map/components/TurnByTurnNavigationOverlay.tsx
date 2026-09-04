@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,26 +10,80 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CornerUpLeft,
+  CornerUpRight,
+  ArrowUp,
+  RotateCcw,
+  MapPin,
   X,
-  Search,
-  Volume2,
-  VolumeX,
-  Mic,
   TriangleAlert,
   Navigation,
   GitFork,
 } from 'lucide-react-native';
 import { useTheme } from '../../../theme/ThemeContext';
 import { radius, shadows, spacing } from '../../../theme';
-import type { RouteStop, LngLat } from '../../../types/geo';
+import type { RouteStop, LngLat, GeoJSONFeatureCollection } from '../../../types/geo';
 
 export type NavigationOrientationMode = 'course' | 'north';
+
+interface ManeuverState {
+  distanceText: string;
+  instructionText: string;
+  type: 'straight' | 'left' | 'right' | 'slight_left' | 'slight_right' | 'u_turn' | 'arrive';
+  nextInstructionText?: string;
+  nextType?: 'straight' | 'left' | 'right' | 'slight_left' | 'slight_right' | 'u_turn' | 'arrive';
+}
+
+function fastDistance(lon1: number, lat1: number, lon2: number, lat2: number): number {
+  const dLat = (lat2 - lat1) * 111139;
+  const avgLat = ((lat1 + lat2) * Math.PI) / 360;
+  const dLon = (lon2 - lon1) * 111139 * Math.cos(avgLat);
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
+
+function calculateBearing(start: [number, number], end: [number, number]): number {
+  const startLat = (start[1] * Math.PI) / 180;
+  const startLng = (start[0] * Math.PI) / 180;
+  const endLat = (end[1] * Math.PI) / 180;
+  const endLng = (end[0] * Math.PI) / 180;
+  const dLng = endLng - startLng;
+  const y = Math.sin(dLng) * Math.cos(endLat);
+  const x =
+    Math.cos(startLat) * Math.sin(endLat) -
+    Math.sin(startLat) * Math.cos(endLat) * Math.cos(dLng);
+  let brng = (Math.atan2(y, x) * 180) / Math.PI;
+  return (brng + 360) % 360;
+}
+
+function normalizeAngle(diff: number): number {
+  let angle = diff;
+  while (angle < -180) angle += 360;
+  while (angle > 180) angle -= 360;
+  return angle;
+}
+
+function renderManeuverIcon(type: ManeuverState['type'], size = 38) {
+  switch (type) {
+    case 'left':
+    case 'slight_left':
+      return <CornerUpLeft size={size} color="#FFFFFF" strokeWidth={3.2} />;
+    case 'right':
+    case 'slight_right':
+      return <CornerUpRight size={size} color="#FFFFFF" strokeWidth={3.2} />;
+    case 'u_turn':
+      return <RotateCcw size={size} color="#FFFFFF" strokeWidth={3} />;
+    case 'arrive':
+      return <MapPin size={size} color="#FFFFFF" strokeWidth={3} />;
+    default:
+      return <ArrowUp size={size} color="#FFFFFF" strokeWidth={3.5} />;
+  }
+}
 
 interface TurnByTurnNavigationOverlayProps {
   nextStop: RouteStop | null;
   routeDistanceM: number;
   routeDurationS: number;
   currentLocation: LngLat | null;
+  route?: GeoJSONFeatureCollection | null;
   orientationMode: NavigationOrientationMode;
   currentHeading: number | null;
   onToggleOrientation: () => void;
@@ -45,6 +99,8 @@ export function TurnByTurnNavigationOverlay({
   nextStop,
   routeDistanceM,
   routeDurationS,
+  currentLocation,
+  route,
   orientationMode,
   currentHeading,
   onToggleOrientation,
@@ -90,6 +146,165 @@ export function TurnByTurnNavigationOverlay({
     }
   };
 
+  const maneuver: ManeuverState = useMemo(() => {
+    const coords = (route?.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
+    if (!coords || coords.length < 2 || !currentLocation) {
+      const distStr =
+        routeDistanceM >= 1000
+          ? `${(routeDistanceM / 1000).toFixed(1).replace('.', ',')} km`
+          : `${Math.round(routeDistanceM)} m`;
+      return {
+        distanceText: distStr,
+        instructionText: 'Siga em frente no percurso',
+        type: 'straight',
+      };
+    }
+
+    // 1. Achar o segmento mais próximo da posição GPS atual
+    let closestIdx = 0;
+    let minDistance = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const d = fastDistance(currentLocation[0], currentLocation[1], coords[i][0], coords[i][1]);
+      if (d < minDistance) {
+        minDistance = d;
+        closestIdx = i;
+      }
+    }
+
+    // Distância total restante até o destino
+    let distRemaining = fastDistance(
+      currentLocation[0],
+      currentLocation[1],
+      coords[closestIdx][0],
+      coords[closestIdx][1],
+    );
+    for (let i = closestIdx; i < coords.length - 1; i++) {
+      distRemaining += fastDistance(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+    }
+
+    if (distRemaining <= 45) {
+      return {
+        distanceText: `${Math.round(distRemaining)} m`,
+        instructionText: 'Você está chegando ao destino',
+        type: 'arrive',
+      };
+    }
+
+    // 2. Procurar a primeira curva significativa (deflexão angular >= 28 graus)
+    let firstTurnIdx = -1;
+    let firstTurnAngle = 0;
+    let distToFirstTurn = fastDistance(
+      currentLocation[0],
+      currentLocation[1],
+      coords[closestIdx][0],
+      coords[closestIdx][1],
+    );
+
+    for (let i = closestIdx; i < coords.length - 2; i++) {
+      const seg1 = calculateBearing(coords[i], coords[i + 1]);
+      const seg2 = calculateBearing(coords[i + 1], coords[i + 2]);
+      const diff = normalizeAngle(seg2 - seg1);
+      distToFirstTurn += fastDistance(coords[i][0], coords[i][1], coords[i + 1][0], coords[i + 1][1]);
+
+      if (Math.abs(diff) >= 28) {
+        firstTurnIdx = i + 1;
+        firstTurnAngle = diff;
+        break;
+      }
+    }
+
+    // Se nenhuma curva expressiva à frente no trecho
+    if (firstTurnIdx === -1 || distToFirstTurn > 1500) {
+      const distStr =
+        distRemaining >= 1000
+          ? `${(distRemaining / 1000).toFixed(1).replace('.', ',')} km`
+          : `${Math.round(distRemaining)} m`;
+      return {
+        distanceText: distStr,
+        instructionText: 'Siga em frente na via',
+        type: 'straight',
+      };
+    }
+
+    const distTurnStr =
+      distToFirstTurn >= 1000
+        ? `${(distToFirstTurn / 1000).toFixed(1).replace('.', ',')} km`
+        : `${Math.round(distToFirstTurn / 10) * 10} m`;
+
+    let turnType: ManeuverState['type'] = 'straight';
+    let turnAction = '';
+
+    if (firstTurnAngle > 135 || firstTurnAngle < -135) {
+      turnType = 'u_turn';
+      turnAction = 'Faça o retorno';
+    } else if (firstTurnAngle > 75) {
+      turnType = 'right';
+      turnAction = 'Vire à direita';
+    } else if (firstTurnAngle > 28) {
+      turnType = 'slight_right';
+      turnAction = 'Curva suave à direita';
+    } else if (firstTurnAngle < -75) {
+      turnType = 'left';
+      turnAction = 'Vire à esquerda';
+    } else {
+      turnType = 'slight_left';
+      turnAction = 'Curva suave à esquerda';
+    }
+
+    let instruction = '';
+    if (distToFirstTurn <= 30) {
+      instruction = `${turnAction} agora`;
+    } else if (distToFirstTurn <= 500) {
+      instruction = `A ${distTurnStr}, ${turnAction.toLowerCase()}`;
+    } else {
+      instruction = `Siga em frente, a ${distTurnStr} ${turnAction.toLowerCase()}`;
+    }
+
+    // 3. Procurar próxima manobra (sub-banner "Depois,")
+    let nextTurnAngle = 0;
+    let nextAction = '';
+    let nextType: ManeuverState['type'] | undefined = undefined;
+
+    if (firstTurnIdx !== -1) {
+      for (let j = firstTurnIdx; j < Math.min(coords.length - 2, firstTurnIdx + 20); j++) {
+        const segA = calculateBearing(coords[j], coords[j + 1]);
+        const segB = calculateBearing(coords[j + 1], coords[j + 2]);
+        const diffB = normalizeAngle(segB - segA);
+        if (Math.abs(diffB) >= 28) {
+          nextTurnAngle = diffB;
+          break;
+        }
+      }
+
+      if (nextTurnAngle !== 0) {
+        if (nextTurnAngle > 135 || nextTurnAngle < -135) {
+          nextType = 'u_turn';
+          nextAction = 'faça o retorno';
+        } else if (nextTurnAngle > 75) {
+          nextType = 'right';
+          nextAction = 'vire à direita';
+        } else if (nextTurnAngle > 28) {
+          nextType = 'slight_right';
+          nextAction = 'curva à direita';
+        } else if (nextTurnAngle < -75) {
+          nextType = 'left';
+          nextAction = 'vire à esquerda';
+        } else {
+          nextType = 'slight_left';
+          nextAction = 'curva à esquerda';
+        }
+      }
+    }
+
+    return {
+      distanceText: distTurnStr,
+      instructionText: instruction,
+      type: turnType,
+      nextInstructionText: nextAction ? `Depois, ${nextAction}` : undefined,
+      nextType,
+    };
+  }, [route, currentLocation, routeDistanceM]);
+
   const destinationText = nextStop?.address || nextStop?.deliveries[0]?.destination || 'Destino';
   const bairroText = nextStop?.bairro || nextStop?.city || '';
 
@@ -102,35 +317,29 @@ export function TurnByTurnNavigationOverlay({
       <View style={[styles.topBannerContainer, { paddingTop: Math.max(insets.top, 12) + 4 }]}>
         <View style={styles.topBannerMain}>
           <View style={styles.maneuverIconCol}>
-            <CornerUpLeft size={38} color="#FFFFFF" strokeWidth={3.2} />
+            {renderManeuverIcon(maneuver.type, 38)}
           </View>
 
           <View style={styles.maneuverInfoCol}>
-            <Text style={styles.maneuverDistance}>170 m</Text>
+            <Text style={styles.maneuverDistance}>{maneuver.distanceText}</Text>
             <Text style={styles.maneuverStreet} numberOfLines={1}>
-              {destinationText}
+              {maneuver.instructionText}
             </Text>
-            {bairroText ? (
+            {destinationText ? (
               <Text style={styles.maneuverBairro} numberOfLines={1}>
-                {bairroText}
+                {destinationText}{bairroText ? ` • ${bairroText}` : ''}
               </Text>
             ) : null}
           </View>
-
-          <Pressable
-            style={({ pressed }) => [styles.micCircle, pressed && styles.btnPressed]}
-            hitSlop={8}
-            onPress={() => Alert.alert('Comando de Voz', 'Fale o endereço ou comando desejado.')}
-          >
-            <Mic size={22} color="#0284C7" strokeWidth={2.5} />
-          </Pressable>
         </View>
 
         {/* Sub-banner "Depois, ↰" */}
-        <View style={styles.subBannerPill}>
-          <Text style={styles.subBannerText}>Depois,</Text>
-          <CornerUpLeft size={16} color="#FFFFFF" strokeWidth={3} />
-        </View>
+        {maneuver.nextInstructionText ? (
+          <View style={styles.subBannerPill}>
+            <Text style={styles.subBannerText}>{maneuver.nextInstructionText}</Text>
+            {renderManeuverIcon(maneuver.nextType || 'straight', 16)}
+          </View>
+        ) : null}
       </View>
 
       {/* ── 2. Right Floating Action Column ── */}
@@ -155,28 +364,6 @@ export function TurnByTurnNavigationOverlay({
             <View style={styles.northIndicatorDot}>
               <Text style={styles.northIndicatorText}>N</Text>
             </View>
-          )}
-        </Pressable>
-
-        {/* Search Button */}
-        <Pressable
-          style={({ pressed }) => [styles.roundControlBtn, pressed && styles.btnPressed]}
-          onPress={onSearchPress || (() => Alert.alert('Buscar no Percurso', 'Pesquisar postos, paradas ou vias.'))}
-          hitSlop={8}
-        >
-          <Search size={22} color="#334155" strokeWidth={2.2} />
-        </Pressable>
-
-        {/* Audio / Mute Button */}
-        <Pressable
-          style={({ pressed }) => [styles.roundControlBtn, pressed && styles.btnPressed]}
-          onPress={handleMuteToggle}
-          hitSlop={8}
-        >
-          {isMuted ? (
-            <VolumeX size={22} color="#94A3B8" strokeWidth={2.2} />
-          ) : (
-            <Volume2 size={22} color="#334155" strokeWidth={2.2} />
           )}
         </Pressable>
       </View>
