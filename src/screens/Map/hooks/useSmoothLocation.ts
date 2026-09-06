@@ -56,29 +56,33 @@ export function useSmoothLocation({
     const dLat = (newLat - prevLat) * 110540;
     const distM = Math.sqrt(dLng * dLng + dLat * dLat);
 
-    // Filtro anti-ruído: ignora micro-deriva de GPS parado (< 1.5m)
-    if (distM < 1.5) {
+    // Filtro anti-ruído: ignora micro-deriva parado (< 1.5m), mas em navegação responde fluidamente a 0.35m
+    const minDistance = isNavigating ? 0.35 : 1.5;
+    if (distM < minDistance) {
       return;
     }
 
     startCoordRef.current = currentCoordRef.current;
     targetCoordRef.current = rawLocation;
     animStartTimeRef.current = Date.now();
-    animDurationRef.current = Math.min(800, Math.max(400, distM * 60));
+    animDurationRef.current = isNavigating
+      ? Math.min(500, Math.max(250, distM * 40))
+      : Math.min(800, Math.max(400, distM * 60));
 
     triggerAnimation();
-  }, [rawLocation]);
+  }, [rawLocation, isNavigating]);
 
   // 2. Atualização do Alvo de Heading
   useEffect(() => {
     if (rawHeading !== null && rawHeading >= 0) {
       const diff = Math.abs(((rawHeading - targetHeadingRef.current + 540) % 360) - 180);
-      if (diff >= 2.0) {
+      const minHeadingDiff = isNavigating ? 0.8 : 2.0;
+      if (diff >= minHeadingDiff) {
         targetHeadingRef.current = rawHeading;
         triggerAnimation();
       }
     }
-  }, [rawHeading]);
+  }, [rawHeading, isNavigating]);
 
   // 3. Gerenciador de Animação sob Demanda (inicia e encerra quando atinge o alvo)
   const triggerAnimation = () => {
@@ -95,7 +99,8 @@ export function useSmoothLocation({
         const progress = Math.min(1, elapsed / animDurationRef.current);
 
         if (progress < 1) {
-          const t = 1 - Math.pow(1 - progress, 3);
+          // Em navegação ativa, interpolação linear mantém a velocidade constante entre pings de GPS (sem engasgos)
+          const t = isNavigating ? progress : 1 - Math.pow(1 - progress, 3);
           const [startLng, startLat] = startCoordRef.current;
           const [targetLng, targetLat] = targetCoordRef.current;
           const currentLng = startLng + (targetLng - startLng) * t;
@@ -115,8 +120,9 @@ export function useSmoothLocation({
       const currentH = currentHeadingRef.current;
       const diffH = ((targetH - currentH + 540) % 360) - 180;
 
-      if (Math.abs(diffH) > 0.4) {
-        const nextH = (currentH + diffH * 0.3 + 360) % 360;
+      if (Math.abs(diffH) > 0.3) {
+        const factor = isNavigating ? 0.45 : 0.3;
+        const nextH = (currentH + diffH * factor + 360) % 360;
         currentHeadingRef.current = nextH;
         setSmoothHeading(nextH);
         hasMovement = true;

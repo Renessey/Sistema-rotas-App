@@ -10,6 +10,7 @@ import {
   Marker,
 } from '@maplibre/maplibre-react-native';
 import { CustomMarkerPin } from '../../../components/Map/CustomMarkerPin';
+import { NavigationArrowMarker } from '../../../components/Map/NavigationArrowMarker';
 import type {
   GeoJSONFeatureCollection,
   LngLat,
@@ -208,14 +209,18 @@ export function MapLibreView({
         );
       })}
 
-      {/* Current User Marker (Bolinha clássica de localização) */}
+      {/* Current User Marker (Seta em navegação ou Ponto clássico com halo em visualização livre) */}
       {currentLocation && (
         <Marker id="user-location" lngLat={currentLocation} anchor="center">
-          <View style={styles.userMarkerRing}>
-            <View style={styles.userMarkerOuter}>
-              <View style={styles.userMarkerInner} />
+          {isNavigating ? (
+            <NavigationArrowMarker rotation={currentHeading || 0} size={50} />
+          ) : (
+            <View style={styles.userMarkerRing}>
+              <View style={styles.userMarkerOuter}>
+                <View style={styles.userMarkerInner} />
+              </View>
             </View>
-          </View>
+          )}
         </Marker>
       )}
 

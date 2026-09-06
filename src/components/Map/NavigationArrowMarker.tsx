@@ -43,12 +43,12 @@ export const NavigationArrowMarker = memo(function NavigationArrowMarker({
         </Defs>
 
         {/* Anel de sombra / halo translúcido exterior */}
-        <Circle cx={center} cy={center} r={24} fill="url(#haloGrad)" />
+        <Circle cx={26} cy={26} r={24} fill="url(#haloGrad)" />
 
         {/* Círculo base branco elevado */}
         <Circle
-          cx={center}
-          cy={center}
+          cx={26}
+          cy={26}
           r={17}
           fill="#FFFFFF"
           stroke="#E2E8F0"

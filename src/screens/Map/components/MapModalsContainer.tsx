@@ -311,11 +311,6 @@ export function MapModalsContainer({
           <View style={styles.loadingModalCard}>
             <ActivityIndicator size="large" color="#4F46E5" />
             <Text style={styles.loadingModalTitle}>Otimizando rotas</Text>
-            <Text style={styles.loadingModalSub}>
-              {isOfflineMode
-                ? 'Calculando traçado viário real via motor offline (OSM)...'
-                : 'Calculando a melhor sequência e tempo estimado com Mapbox...'}
-            </Text>
           </View>
         </View>
       )}

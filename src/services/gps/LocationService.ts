@@ -1,4 +1,4 @@
-import { PermissionsAndroid, Platform } from 'react-native';
+import { PermissionsAndroid, Platform, Linking } from 'react-native';
 import Geolocation, {
   GeolocationResponse,
   GeolocationError,
@@ -34,7 +34,7 @@ try {
   Geolocation.setRNConfiguration({
     skipPermissionRequests: false,
     authorizationLevel: 'whenInUse',
-    locationProvider: 'playServices',
+    locationProvider: 'auto',
     enableBackgroundLocationUpdates: false,
   });
 } catch {
@@ -43,8 +43,8 @@ try {
 
 const DEFAULT_OPTIONS: GeolocationOptions = {
   enableHighAccuracy: true,
-  timeout: 10000,
-  maximumAge: 0,
+  timeout: 15000,
+  maximumAge: 1000,
   distanceFilter: 0,
   interval: 500,
   fastestInterval: 250,
@@ -79,16 +79,33 @@ export class LocationService {
 
   /**
    * Requests location permission.
+   * On Android 12+, requests both ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION.
    * Returns 'granted' | 'denied' | 'blocked'.
    */
   static async requestPermission(): Promise<'granted' | 'denied' | 'blocked'> {
     if (Platform.OS === 'android') {
       try {
-        const granted = await PermissionsAndroid.request(
+        const results = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        );
-        if (granted === PermissionsAndroid.RESULTS.GRANTED) return 'granted';
-        if (granted === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN) return 'blocked';
+          PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+        ]);
+        const fineStatus = results[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+        const coarseStatus = results[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION];
+
+        if (
+          fineStatus === PermissionsAndroid.RESULTS.GRANTED ||
+          coarseStatus === PermissionsAndroid.RESULTS.GRANTED
+        ) {
+          return 'granted';
+        }
+
+        if (
+          fineStatus === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN ||
+          coarseStatus === PermissionsAndroid.RESULTS.NEVER_ASK_AGAIN
+        ) {
+          return 'blocked';
+        }
+
         return 'denied';
       } catch (err) {
         console.warn('[LocationService] permission error', err);
@@ -99,6 +116,15 @@ export class LocationService {
     // iOS: prompt happens on first request; assume granted here,
     // failures surface through getCurrentPosition errors.
     return 'granted';
+  }
+
+  /** Opens device application settings if permissions were blocked */
+  static async openAppSettings(): Promise<void> {
+    try {
+      await Linking.openSettings();
+    } catch (err) {
+      console.warn('[LocationService] openSettings error', err);
+    }
   }
 
   /**

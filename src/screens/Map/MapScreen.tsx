@@ -10,7 +10,7 @@ import { createScreenStyles } from './MapScreenStyles';
 import { FloatingMapControls } from '../../components/Map/FloatingMapControls';
 
 // ─── Camada de Utilitários ───────────────────────────────────────────────────
-import { formatDistance, formatDuration } from './utils/mapUtils';
+import { formatDistance, formatDuration, snapLocationToRoute } from './utils/mapUtils';
 
 // ─── Camada de Lógica / Hooks ("Backend") ────────────────────────────────────
 import {
@@ -333,45 +333,36 @@ export default function MapScreen({ navigation }: Props) {
     }
   }, [smoothLocation, currentLocation, nextStop, setFollowGPS, navigationOrientation, route, currentHeadingRef, setHeading]);
 
-  // ─── Polyline Dinâmica em Navegação ───
-  // Corta a polyline para começar na posição GPS exata do veículo enquanto ele anda na rota
-  const dynamicRoute = useMemo<GeoJSONFeatureCollection | null>(() => {
-    if (!route || !isNavigating || !currentLocation) return route;
+  // ─── Polyline Dinâmica e Map-Matching em Navegação ───
+  // Projeta a posição do veículo e o início da polyline no eixo da pista (zero gaps, zero cortes falsos)
+  const { navDisplayLocation, dynamicRoute } = useMemo(() => {
+    const rawPos = smoothLocation || currentLocation;
+    if (!route || !isNavigating || !rawPos) {
+      return { navDisplayLocation: rawPos, dynamicRoute: route };
+    }
+
     const coords = (route.features?.[0]?.geometry?.coordinates as LngLat[]) || [];
-    if (coords.length < 2) return route;
-
-    let closestIdx = 0;
-    let minDist = Infinity;
-    for (let i = 0; i < coords.length; i++) {
-      const d = fastDistance(currentLocation[0], currentLocation[1], coords[i][0], coords[i][1]);
-      if (d < minDist) {
-        minDist = d;
-        closestIdx = i;
-      }
+    if (coords.length < 2) {
+      return { navDisplayLocation: rawPos, dynamicRoute: route };
     }
 
-    // Se estiver a menos de 40 metros da rota, conecta o GPS aos pontos futuros da polyline
-    if (minDist <= 40) {
-      const remainingCoords = coords.slice(closestIdx + 1);
-      const sliced = [currentLocation, ...remainingCoords];
-      if (sliced.length >= 2) {
-        return {
-          type: 'FeatureCollection',
-          features: [
-            {
-              ...route.features[0],
-              geometry: {
-                type: 'LineString',
-                coordinates: sliced,
-              },
-            },
-          ],
-        };
-      }
-    }
+    const { snappedLocation, trimmedCoordinates } = snapLocationToRoute(rawPos, coords, 32);
 
-    return route;
-  }, [route, isNavigating, currentLocation]);
+    const updatedRoute: GeoJSONFeatureCollection = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          ...route.features[0],
+          geometry: {
+            type: 'LineString',
+            coordinates: trimmedCoordinates,
+          },
+        },
+      ],
+    };
+
+    return { navDisplayLocation: snappedLocation, dynamicRoute: updatedRoute };
+  }, [route, isNavigating, smoothLocation, currentLocation]);
 
   // Sincroniza a referência da rota para o hook useMapLocation orientar a câmera pela polyline
   routeRef.current = dynamicRoute || route;
@@ -438,7 +429,7 @@ export default function MapScreen({ navigation }: Props) {
         setZoom={setZoom}
         route={dynamicRoute}
         geoLassoLoops={geoLassoLoops}
-        currentLocation={smoothLocation || currentLocation}
+        currentLocation={isNavigating ? navDisplayLocation : (smoothLocation || currentLocation)}
         routeStops={routeStops}
         hideCompleted={hideCompleted}
         nextStop={nextStop}
@@ -472,7 +463,7 @@ export default function MapScreen({ navigation }: Props) {
           nextStop={nextStop}
           routeDistanceM={effectiveRouteDistanceM}
           routeDurationS={routeInfo?.duration || 720}
-          currentLocation={smoothLocation || currentLocation}
+          currentLocation={isNavigating ? navDisplayLocation : (smoothLocation || currentLocation)}
           route={dynamicRoute}
           orientationMode={navigationOrientation}
           currentHeading={smoothHeading}

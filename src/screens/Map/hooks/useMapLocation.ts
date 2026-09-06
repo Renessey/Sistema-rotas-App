@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Alert } from 'react-native';
 import type { CameraRef } from '@maplibre/maplibre-react-native';
 import { LocationService } from '../../../services/gps/LocationService';
 import { CompassService } from '../../../services/gps/CompassService';
@@ -132,8 +133,18 @@ export function useMapLocation(
       const permission = await LocationService.requestPermission();
       if (!mounted) return;
       if (permission === 'denied' || permission === 'blocked') {
-        setGpsError('Permissão de localização negada.');
+        setGpsError('Permissão de localização necessária.');
         setDiagStatus('error');
+        if (permission === 'blocked') {
+          Alert.alert(
+            'Permissão de Localização',
+            'O aplicativo precisa da permissão de localização para exibir o mapa e navegar até as paradas. Ative a permissão nas configurações do aparelho.',
+            [
+              { text: 'Cancelar', style: 'cancel' },
+              { text: 'Abrir Configurações', onPress: () => LocationService.openAppSettings() },
+            ],
+          );
+        }
         return;
       }
 
@@ -193,6 +204,7 @@ export function useMapLocation(
           if (!mounted) return;
           const coords: LngLat = [update.longitude, update.latitude];
           const prevLocation = lastLocationRef.current;
+          const isInitialFix = !prevLocation;
           const distM = prevLocation ? calculateDistanceMeters(prevLocation, coords) : 0;
           const userSpeed = update.speed ?? 0;
 
@@ -205,11 +217,41 @@ export function useMapLocation(
           if (activeRoute && activeRoute.features && activeRoute.features.length > 0) {
             const rCoords = (activeRoute.features[0]?.geometry?.coordinates as LngLat[]) || [];
             if (rCoords.length >= 2) {
-              polylineBearing = getRouteBearing(coords, rCoords, 22);
+              const lookahead = Math.max(16, Math.min(36, userSpeed * 2.2));
+              polylineBearing = getRouteBearing(coords, rCoords, lookahead);
             }
           }
 
-          if (polylineBearing !== null) {
+          if (isInitialFix) {
+            // Primeiro fix capturado pelo watcher (se getCurrentPosition inicial demorou ou falhou)
+            lastLocationRef.current = coords;
+            setCurrentLocation(coords);
+
+            if (polylineBearing !== null) {
+              currentHeadingRef.current = polylineBearing;
+              setHeading(polylineBearing);
+            } else if (update.heading !== null && update.heading >= 0) {
+              currentHeadingRef.current = update.heading;
+              setHeading(update.heading);
+            }
+
+            if (!hasInitialCenteredRef.current) {
+              hasInitialCenteredRef.current = true;
+              lastCameraPositionRef.current = coords;
+              const targetBearing =
+                isNavigatingRef.current && navigationOrientationRef.current !== 'north'
+                  ? (currentHeadingRef.current || 0)
+                  : 0;
+              lastCameraBearingRef.current = targetBearing;
+              cameraRef.current?.setStop({
+                center: coords,
+                zoom: 18.5,
+                pitch: isNavigatingRef.current ? 55 : 0,
+                bearing: targetBearing,
+                duration: 800,
+              });
+            }
+          } else if (polylineBearing !== null) {
             // Segue rigorosamente a polyline azul da rota:
             // Alinha de frente para a rua e vira nas curvas/esquinas sem precisar de bússola magnética
             currentHeadingRef.current = polylineBearing;
@@ -233,7 +275,9 @@ export function useMapLocation(
             setCurrentLocation(coords);
           } else {
             // Em repouso (parado): mantém o rumo anterior para evitar qualquer giro
+            // Se houver deslocamento relevante (>= 1.5m), atualiza o ponto
             if (distM >= 1.5) {
+              lastLocationRef.current = coords;
               setCurrentLocation(coords);
             }
           }
@@ -249,7 +293,7 @@ export function useMapLocation(
             const now = Date.now();
 
             if (isNavigatingRef.current) {
-              // Navegação Ativa 3D: acompanha a condução e vira nas ruas
+              // Navegação Ativa 3D: acompanha a condução e vira nas ruas com total fluidez (zero gaps)
               const cameraDist = lastCameraPositionRef.current
                 ? calculateDistanceMeters(lastCameraPositionRef.current, coords)
                 : 999;
@@ -258,24 +302,37 @@ export function useMapLocation(
                 ? (polylineBearing ?? currentHeadingRef.current ?? 0)
                 : 0;
 
-              // Verifica se o rumo da rua mudou (ex: virou esquina na polyline)
-              const bearingChanged = lastCameraBearingRef.current !== null
-                ? Math.abs(((targetBearing - lastCameraBearingRef.current + 540) % 360) - 180) >= 3.0
-                : true;
+              // Encontra o caminho angular contínuo mais curto (evita o bug de girar 360° ao cruzar 0°/360°)
+              let continuousBearing = targetBearing;
+              if (lastCameraBearingRef.current !== null) {
+                const diffAngle = ((targetBearing - lastCameraBearingRef.current + 540) % 360) - 180;
+                continuousBearing = lastCameraBearingRef.current + diffAngle;
+              }
 
+              const bearingDiff = lastCameraBearingRef.current !== null
+                ? Math.abs(continuousBearing - lastCameraBearingRef.current)
+                : 999;
+
+              const timeElapsed = now - lastCameraUpdateTimeRef.current;
+
+              // Dispara atualização se passou tempo suficiente (>= 250ms) e houve movimento ou giro
               if (
-                now - lastCameraUpdateTimeRef.current >= 450 &&
-                (isMoving || cameraDist >= 2.0 || bearingChanged || !lastCameraPositionRef.current)
+                timeElapsed >= 250 &&
+                (isMoving || cameraDist >= 0.8 || bearingDiff >= 0.8 || !lastCameraPositionRef.current)
               ) {
+                // Duração adaptada ao intervalo real entre updates, garantindo transição sem pausas
+                const animDuration = Math.min(650, Math.max(280, timeElapsed + 40));
                 lastCameraUpdateTimeRef.current = now;
                 lastCameraPositionRef.current = coords;
-                lastCameraBearingRef.current = targetBearing;
+                lastCameraBearingRef.current = continuousBearing;
+
                 cameraRef.current?.setStop({
                   center: coords,
                   zoom: 18.5,
                   pitch: 55,
-                  bearing: targetBearing,
-                  duration: 500,
+                  bearing: continuousBearing,
+                  duration: animDuration,
+                  easing: 'linear',
                 });
               }
             } else {
