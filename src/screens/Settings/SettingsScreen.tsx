@@ -303,7 +303,7 @@ export default function SettingsScreen({ navigation }: Props) {
 
         {/* Informações da Versão */}
         <View style={styles.footerInfo}>
-          <Text style={styles.footerText}>RotaSimples v2.1</Text>
+          <Text style={styles.footerText}>Rotimize v2.1</Text>
           <Text style={styles.footerSubText}>Navegação Inteligente & MapLibre</Text>
         </View>
       </ScrollView>

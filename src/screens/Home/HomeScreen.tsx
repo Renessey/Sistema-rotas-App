@@ -1,5 +1,5 @@
 /**
- * HomeScreen — Dashboard principal do app RotaSimples.
+ * HomeScreen — Dashboard principal do app Rotimize.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import {
   Animated,
   Dimensions,
   Modal,
+  Image,
   type ViewStyle,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
@@ -173,8 +174,8 @@ function AppHeader() {
   return (
     <View style={header.root}>
       <View style={header.textBlock}>
-        <Text style={header.title}>RotaSimples</Text>
-        <Text style={header.subtitle}>Gestão de Entregas Profissional</Text>
+        <Text style={header.title}>Rotimize</Text>
+        <Text style={header.subtitle}>Roteamento & Entregas Inteligentes</Text>
       </View>
       <Pressable onPress={toggleTheme} style={header.themeToggle}>
         {theme === 'light' ? (
@@ -184,7 +185,11 @@ function AppHeader() {
         )}
       </Pressable>
       <View style={header.badge}>
-        <Truck size={26} color={colors.primary} />
+        <Image
+          source={require('../../assets/logo.png')}
+          style={{ width: 44, height: 44, borderRadius: radius.md }}
+          resizeMode="cover"
+        />
       </View>
     </View>
   );
@@ -468,7 +473,7 @@ function ConnectivityRow({ offlineOk }: ConnectivityRowProps) {
   const conn = React.useMemo(() => createConnStyles(colors), [colors]);
   const status = {
     color: colors.success,
-    label: 'Mapbox Directions API v5 (Online)',
+    label: 'Navegação Inteligente & Otimização (Online)',
   };
 
   return (

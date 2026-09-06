@@ -1,5 +1,5 @@
 /**
- * Design System — RotaSimples Premium
+ * Design System — Rotimize Premium
  * Paleta dark/slate com azul elétrico, esmeralda e âmbar tático.
  */
 

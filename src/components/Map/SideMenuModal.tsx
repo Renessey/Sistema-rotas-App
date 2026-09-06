@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Dimensions,
   Animated,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { radius, shadows, spacing } from '../../theme';
@@ -125,11 +126,15 @@ export function SideMenuModal({
           <View style={styles.header}>
             <View style={styles.brandRow}>
               <View style={styles.logoBadge}>
-                <Zap size={20} color="#FFFFFF" />
+                <Image
+                  source={require('../../assets/logo.png')}
+                  style={styles.logoImg}
+                  resizeMode="cover"
+                />
               </View>
               <View style={styles.brandTextWrap}>
-                <Text style={styles.brandTitle}>RotaSimples</Text>
-                <Text style={styles.brandSub}>Mapbox Directions API v5</Text>
+                <Text style={styles.brandTitle}>Rotimize</Text>
+                <Text style={styles.brandSub}>Otimização inteligente</Text>
               </View>
             </View>
 
@@ -305,7 +310,7 @@ export function SideMenuModal({
 
           {/* Footer */}
           <View style={styles.footer}>
-            <Text style={styles.footerBrand}>RotaSimples</Text>
+            <Text style={styles.footerBrand}>Rotimize</Text>
             <Text style={styles.footerSub}>Gestão e Roteamento Inteligente</Text>
           </View>
         </Animated.View>
@@ -346,12 +351,17 @@ const createStyles = (colors: any) =>
       gap: spacing.sm + 2,
     },
     logoBadge: {
-      width: 38,
-      height: 38,
+      width: 42,
+      height: 42,
       borderRadius: radius.md,
-      backgroundColor: colors.primary,
+      overflow: 'hidden',
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: '#1800AD',
+    },
+    logoImg: {
+      width: 42,
+      height: 42,
     },
     brandTextWrap: {
       gap: 1,

@@ -32,7 +32,7 @@ export function formatDeliveryReportText(
     minute: '2-digit',
   });
 
-  let text = `📦 *RELATÓRIO DE ENTREGAS — RotaSimples*\n`;
+  let text = `📦 *RELATÓRIO DE ENTREGAS — Rotimize*\n`;
   text += `📅 Data/Hora: ${dateStr}\n`;
   text += `📋 Romaneio / Lista: *${listName || 'Lista Atual'}*\n`;
   text += `───────────────────────\n`;
