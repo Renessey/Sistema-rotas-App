@@ -171,6 +171,7 @@ export default function MapScreen({ navigation }: Props) {
     selectStop,
     completeStop,
     skipStop,
+    revertStop,
     deleteStop,
     updateStopCoordinates,
     revertStopCoordinates,
@@ -601,6 +602,7 @@ export default function MapScreen({ navigation }: Props) {
           onClose={() => setActiveStop(null)}
           onComplete={completeStop}
           onSkip={skipStop}
+          onRevert={revertStop}
           onOpenAdjustPin={openAdjustPin}
         />
       )}

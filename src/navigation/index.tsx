@@ -7,6 +7,7 @@ import SettingsScreen from '../screens/Settings/SettingsScreen';
 import HomeScreen from '../screens/Home/HomeScreen';
 import DeliveriesScreen from '../screens/Deliveries/DeliveriesScreen';
 import DiagnosticScreen from '../screens/Deliveries/DiagnosticScreen';
+import DeliveredHistoryScreen from '../screens/Deliveries/DeliveredHistoryScreen';
 import { useTheme } from '../theme/ThemeContext';
 
 export type RootStackParamList = {
@@ -16,6 +17,7 @@ export type RootStackParamList = {
   Home: undefined;
   Deliveries: undefined;
   Diagnostic: undefined;
+  DeliveredHistory: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -70,6 +72,11 @@ export function Navigation() {
           name="Diagnostic"
           component={DiagnosticScreen}
           options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="DeliveredHistory"
+          component={DeliveredHistoryScreen}
+          options={{ title: 'Entregas Concluídas', headerShown: false }}
         />
       </Stack.Navigator>
     </NavigationContainer>

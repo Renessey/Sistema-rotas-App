@@ -23,6 +23,7 @@ import {
   Sun,
   Moon,
   WifiOff,
+  PackageCheck,
 } from 'lucide-react-native';
 
 interface SideMenuModalProps {
@@ -33,6 +34,7 @@ interface SideMenuModalProps {
   onFitRoutePress?: () => void;
   onLayersPress?: () => void;
   onSettingsPress: () => void;
+  onDeliveredHistoryPress?: () => void;
   onDiagnosticPress?: () => void;
   onListsPress?: () => void;
   onOfflinePress?: () => void;
@@ -51,6 +53,7 @@ export function SideMenuModal({
   onFitRoutePress,
   onLayersPress,
   onSettingsPress,
+  onDeliveredHistoryPress,
   onDiagnosticPress,
   onListsPress,
   onOfflinePress,
@@ -254,6 +257,26 @@ export function SideMenuModal({
               </View>
               <ChevronRight size={18} color={colors.textDisabled} />
             </Pressable>
+
+            {/* Entregas Concluídas (Administração de entregues com foto) */}
+            {onDeliveredHistoryPress && (
+              <Pressable
+                style={({ pressed }) => [styles.menuItem, pressed && styles.menuItemPressed]}
+                onPress={() => {
+                  onClose();
+                  onDeliveredHistoryPress();
+                }}
+              >
+                <View style={[styles.itemIconWrap, { backgroundColor: '#10B98120' }]}>
+                  <PackageCheck size={18} color="#10B981" />
+                </View>
+                <View style={styles.itemTextWrap}>
+                  <Text style={styles.itemTitle}>Entregas Concluídas</Text>
+                  <Text style={styles.itemSub}>Histórico com fotos e pesquisa</Text>
+                </View>
+                <ChevronRight size={18} color={colors.textDisabled} />
+              </Pressable>
+            )}
 
             <View style={styles.divider} />
 

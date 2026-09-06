@@ -30,3 +30,32 @@ jest.mock('@op-engineering/op-sqlite', () => ({
     close: jest.fn(),
   })),
 }));
+
+// Mock global do react-native-image-picker
+jest.mock('react-native-image-picker', () => ({
+  launchCamera: jest.fn((options, callback) => {
+    callback({
+      assets: [
+        {
+          uri: 'file:///data/user/0/com.routes/cache/mock_photo.jpg',
+          base64: 'MOCK_BASE64',
+          width: 1280,
+          height: 960,
+          fileSize: 150000,
+        },
+      ],
+    });
+  }),
+  launchImageLibrary: jest.fn(),
+}));
+
+// Mock global do react-native-fs
+jest.mock('react-native-fs', () => ({
+  DocumentDirectoryPath: '/mock/documents',
+  exists: jest.fn(async () => true),
+  mkdir: jest.fn(async () => true),
+  copyFile: jest.fn(async () => true),
+  unlink: jest.fn(async () => true),
+  stat: jest.fn(async () => ({ size: 1024 })),
+}));
+

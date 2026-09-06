@@ -29,6 +29,7 @@ import {
   Navigation,
   RefreshCw,
   Trash2,
+  PackageCheck,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -234,6 +235,36 @@ export default function SettingsScreen({ navigation }: Props) {
               thumbColor="#FFFFFF"
             />
           </View>
+        </View>
+
+        {/* Histórico de Entregas Concluídas */}
+        <View style={styles.card}>
+          <View style={styles.cardTitleRow}>
+            <PackageCheck size={16} color="#10B981" />
+            <Text style={[styles.sectionHeader, { color: '#10B981' }]}>HISTÓRICO DE ENTREGAS</Text>
+          </View>
+          <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: spacing.sm, lineHeight: 16 }}>
+            Gerencie todas as entregas concluídas com comprovantes de foto e dados completos da planilha.
+          </Text>
+          <Pressable
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: '#10B98118',
+              borderWidth: 1,
+              borderColor: '#10B98140',
+              paddingVertical: 12,
+              borderRadius: radius.lg,
+              gap: 8,
+            }}
+            onPress={() => (navigation as any).navigate('DeliveredHistory')}
+          >
+            <PackageCheck size={16} color="#10B981" />
+            <Text style={{ color: '#10B981', fontSize: 13, fontWeight: '800' }}>
+              Administrar Entregas Concluídas
+            </Text>
+          </Pressable>
         </View>
 
         {/* 5. Gestão de Dados */}

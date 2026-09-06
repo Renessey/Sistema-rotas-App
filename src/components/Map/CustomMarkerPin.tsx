@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Animated } from 'react-native';
 import { shadows } from '../../theme';
 import { useTheme } from '../../theme/ThemeContext';
 import type { DeliveryStatus } from '../../types/geo';
-import { Check, X } from 'lucide-react-native';
+import { Check, X, Camera } from 'lucide-react-native';
 
 export interface CustomMarkerPinProps {
   sequenceNumber?: number | string;
@@ -13,6 +13,7 @@ export interface CustomMarkerPinProps {
   isCompleted?: boolean;
   isFailed?: boolean;
   isLassoSelected?: boolean;
+  hasPreviousDelivery?: boolean;
   count?: number;
 }
 
@@ -24,6 +25,7 @@ export function CustomMarkerPin({
   isCompleted = false,
   isFailed = false,
   isLassoSelected = false,
+  hasPreviousDelivery = false,
   count = 1,
 }: CustomMarkerPinProps) {
   const { colors } = useTheme();
@@ -149,6 +151,13 @@ export function CustomMarkerPin({
           </Text>
         )}
 
+        {/* Badge indicador de entrega anterior com foto */}
+        {hasPreviousDelivery && (
+          <View style={styles.photoProofBadge}>
+            <Camera size={9} color="#FFFFFF" strokeWidth={2.5} />
+          </View>
+        )}
+
         {/* Badge contador quando há mais de 1 entrega no mesmo endereço */}
         {count > 1 && (
           <View style={styles.countBadge}>
@@ -243,5 +252,20 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10,
     fontWeight: '800',
+  },
+  photoProofBadge: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
+    zIndex: 12,
+    ...shadows.sm,
   },
 });

@@ -348,21 +348,55 @@ export function useMapDeliveries({
   );
 
   const completeStop = useCallback(
-    (stop: RouteStop, receiverNote?: string) => {
+    (
+      stop: RouteStop,
+      receiverNote?: string,
+      photoData?: { uri: string; base64?: string },
+    ) => {
       stop.deliveries.forEach((d) => {
         const finalNotes = receiverNote
           ? d.notes
             ? `${d.notes} | Recebedor: ${receiverNote}`
             : `Recebedor: ${receiverNote}`
           : undefined;
+
         DatabaseService.updateDeliveryStatus(d.id, 'completed', {
           deliveredAt: Date.now(),
           notes: finalNotes,
         });
-        // Salva endereço e coordenadas confirmadas no histórico permanente do app
+
+        // Salva o comprovante com foto e dados completos da planilha no SQLite
         const addr = d.destination || d.address || stop.address;
         const lat = d.latitude ?? stop.latitude;
         const lng = d.longitude ?? stop.longitude;
+
+        try {
+          DatabaseService.saveDeliveredProof({
+            deliveryId: d.id,
+            listId: d.listId,
+            recipientName: d.name || d.destination || 'Cliente',
+            address: addr,
+            normalizedAddress: addr,
+            bairro: d.bairro || stop.bairro,
+            city: d.city || stop.city,
+            zipCode: d.zipCode || stop.zipCode,
+            latitude: lat,
+            longitude: lng,
+            orderCode: d.pedido || d.orderCode,
+            phone: d.phone || d.telefone,
+            receiverPerson: receiverNote,
+            photoUri: photoData?.uri,
+            photoBase64: photoData?.base64,
+            notes: finalNotes || d.notes || null,
+            originalData: d.originalData,
+            deliveredAt: Date.now(),
+            createdAt: Date.now(),
+          });
+        } catch (proofErr) {
+          console.warn('[Map] Erro ao salvar comprovante de entrega no SQLite:', proofErr);
+        }
+
+        // Salva endereço e coordenadas confirmadas no histórico permanente do app
         if (addr && lat && lng && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
           DatabaseService.saveAddressHistory({
             address: addr,
@@ -375,6 +409,7 @@ export function useMapDeliveries({
           });
         }
       });
+
       const active = DatabaseService.getActiveList();
       const reloaded = DatabaseService.getAllDeliveries(active?.id);
       setDeliveries(reloaded);
@@ -393,6 +428,28 @@ export function useMapDeliveries({
       onStopCompleted?.();
     },
     [recalculateRoute, onStopCompleted],
+  );
+
+  const revertStop = useCallback(
+    (stop: RouteStop) => {
+      stop.deliveries.forEach((d) => {
+        DatabaseService.revertDeliveryStatus(d.id);
+      });
+      const active = DatabaseService.getActiveList();
+      const reloaded = DatabaseService.getAllDeliveries(active?.id);
+      setDeliveries(reloaded);
+      const completed = new Set(
+        reloaded.filter((d) => d.status === 'completed').map((d) => d.id),
+      );
+      setCompletedIds(completed);
+      setActiveStop(null);
+
+      // Recalcula rota com a parada recolocada na rota
+      const updatedLocated = reloaded.filter((d) => d.latitude !== null && d.longitude !== null);
+      const updatedStops = groupDeliveriesIntoStops(updatedLocated);
+      recalculateRoute(updatedStops);
+    },
+    [recalculateRoute],
   );
 
   const skipStop = useCallback(
@@ -603,6 +660,7 @@ export function useMapDeliveries({
     selectStop,
     completeStop,
     skipStop,
+    revertStop,
     deleteStop,
     updateStopCoordinates,
     revertStopCoordinates,

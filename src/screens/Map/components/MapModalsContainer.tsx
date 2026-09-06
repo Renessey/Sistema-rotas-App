@@ -178,6 +178,7 @@ export function MapModalsContainer({
         onFitRoutePress={onFitRoute}
         onLayersPress={() => setShowLayersModal(true)}
         onSettingsPress={() => navigation.navigate('Settings')}
+        onDeliveredHistoryPress={() => (navigation as any).navigate('DeliveredHistory')}
         onDiagnosticPress={() => navigation.navigate('Diagnostic')}
         onListsPress={() => setShowListsModal(true)}
         onOfflinePress={() => setShowOfflineModal(true)}

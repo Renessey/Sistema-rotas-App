@@ -222,3 +222,29 @@ export type RoutingProvider =
   | 'valhalla_osm_offline'
   | 'local_fallback';
 
+/* ------------------------- Delivered Proof Entity (With Photo & Full Row Data) ------------------------- */
+
+export interface DeliveredProofEntity {
+  id: number;
+  deliveryId?: number | null;
+  listId?: number | null;
+  recipientName: string;
+  address: string;
+  normalizedAddress: string;
+  bairro?: string | null;
+  city?: string | null;
+  zipCode?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  orderCode?: string | null;
+  phone?: string | null;
+  receiverPerson?: string | null;
+  photoUri?: string | null;
+  photoBase64?: string | null;
+  rgDocument?: string | null;
+  notes?: string | null;
+  originalData?: string | null; // Raw spreadsheet JSON string with all columns
+  deliveredAt: number;
+  createdAt: number;
+}
+

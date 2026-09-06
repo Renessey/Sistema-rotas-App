@@ -1,16 +1,25 @@
 import { open, DB } from '@op-engineering/op-sqlite';
-import type { DeliveryEntity, DeliveryListEntity, DeliveryStatus, FailReason } from '../types/geo';
+import type { DeliveryEntity, DeliveryListEntity, DeliveryStatus, FailReason, DeliveredProofEntity } from '../types/geo';
 import { getCanonicalAddressKey } from '../utils/addressParser';
 
 export class DatabaseService {
+  static readonly MAX_DB_SIZE_BYTES = 1024 * 1024 * 1024; // 1 GB (1.073.741.824 bytes)
+  private static currentDbName = 'routes_deliveries_offline.db';
+  private static allDbShards: string[] = ['routes_deliveries_offline.db'];
+  private static shardIndex = 0;
+  private static openedShards: Map<string, DB> = new Map();
   private static db: DB | null = null;
 
   static init(): void {
     if (this.db) return;
-    this.db = open({ name: 'routes_deliveries_offline.db' });
+    this.db = open({ name: this.currentDbName });
+    this.initSchema(this.db);
+    this.openedShards.set(this.currentDbName, this.db);
+  }
 
+  private static initSchema(database: DB): void {
     // 1. Tabela de Listas / Romaneios de Entregas (Lista 1, Lista 2, Lista 3...)
-    this.db.executeSync(`
+    database.executeSync(`
       CREATE TABLE IF NOT EXISTS delivery_lists (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -22,7 +31,7 @@ export class DatabaseService {
     `);
 
     // 2. Tabela principal de entregas offline
-    this.db.executeSync(`
+    database.executeSync(`
       CREATE TABLE IF NOT EXISTS deliveries (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         listId INTEGER,
@@ -55,7 +64,7 @@ export class DatabaseService {
     `);
 
     // 3. Tabela de Histórico Permanente de Pinos e Endereços Confirmados
-    this.db.executeSync(`
+    database.executeSync(`
       CREATE TABLE IF NOT EXISTS address_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         normalized_address TEXT UNIQUE NOT NULL,
@@ -72,44 +81,73 @@ export class DatabaseService {
       );
     `);
 
+    // 4. Tabela de Comprovantes de Entregas Concluídas (Fotos + Dados Completos da Planilha)
+    database.executeSync(`
+      CREATE TABLE IF NOT EXISTS delivered_proofs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        deliveryId INTEGER,
+        listId INTEGER,
+        recipientName TEXT NOT NULL,
+        address TEXT NOT NULL,
+        normalizedAddress TEXT NOT NULL,
+        bairro TEXT,
+        city TEXT,
+        zipCode TEXT,
+        latitude REAL,
+        longitude REAL,
+        orderCode TEXT,
+        phone TEXT,
+        receiverPerson TEXT,
+        photoUri TEXT,
+        photoBase64 TEXT,
+        rgDocument TEXT,
+        notes TEXT,
+        originalData TEXT,
+        deliveredAt INTEGER NOT NULL,
+        createdAt INTEGER NOT NULL
+      );
+    `);
+
     // Migrations seguras de colunas caso o banco já exista
-    const addCol = (col: string, type: string) => {
+    const addCol = (table: string, col: string, type: string) => {
       try {
-        this.db!.executeSync(`ALTER TABLE deliveries ADD COLUMN ${col} ${type};`);
+        database.executeSync(`ALTER TABLE ${table} ADD COLUMN ${col} ${type};`);
       } catch {
         // coluna já existe
       }
     };
 
-    addCol('listId', 'INTEGER');
-    addCol('destination', 'TEXT');
-    addCol('bairro', 'TEXT');
-    addCol('city', 'TEXT');
-    addCol('zipCode', 'TEXT');
-    addCol('latitude', 'REAL');
-    addCol('longitude', 'REAL');
-    addCol('rawLatitude', 'TEXT');
-    addCol('rawLongitude', 'TEXT');
-    addCol('pedido', 'TEXT');
-    addCol('telefone', 'TEXT');
-    addCol('ordem', 'INTEGER');
-    addCol('distancia', 'REAL');
-    addCol('tempoEstimado', 'REAL');
-    addCol('failReason', 'TEXT');
-    addCol('notes', 'TEXT');
-    addCol('deliveredAt', 'INTEGER');
-    addCol('createdAt', 'INTEGER');
-    addCol('updatedAt', 'INTEGER');
-    addCol('originalData', 'TEXT');
+    addCol('deliveries', 'listId', 'INTEGER');
+    addCol('deliveries', 'destination', 'TEXT');
+    addCol('deliveries', 'bairro', 'TEXT');
+    addCol('deliveries', 'city', 'TEXT');
+    addCol('deliveries', 'zipCode', 'TEXT');
+    addCol('deliveries', 'latitude', 'REAL');
+    addCol('deliveries', 'longitude', 'REAL');
+    addCol('deliveries', 'rawLatitude', 'TEXT');
+    addCol('deliveries', 'rawLongitude', 'TEXT');
+    addCol('deliveries', 'pedido', 'TEXT');
+    addCol('deliveries', 'telefone', 'TEXT');
+    addCol('deliveries', 'ordem', 'INTEGER');
+    addCol('deliveries', 'distancia', 'REAL');
+    addCol('deliveries', 'tempoEstimado', 'REAL');
+    addCol('deliveries', 'failReason', 'TEXT');
+    addCol('deliveries', 'notes', 'TEXT');
+    addCol('deliveries', 'deliveredAt', 'INTEGER');
+    addCol('deliveries', 'createdAt', 'INTEGER');
+    addCol('deliveries', 'updatedAt', 'INTEGER');
+    addCol('deliveries', 'originalData', 'TEXT');
 
     // Índices de alta performance para SQLite
     try {
-      this.db!.executeSync(`
+      database.executeSync(`
         CREATE INDEX IF NOT EXISTS idx_deliveries_listId ON deliveries(listId);
         CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status);
         CREATE INDEX IF NOT EXISTS idx_deliveries_ordem ON deliveries(ordem);
         CREATE INDEX IF NOT EXISTS idx_deliveries_seq ON deliveries(sequence);
         CREATE INDEX IF NOT EXISTS idx_address_history_norm ON address_history(normalized_address);
+        CREATE INDEX IF NOT EXISTS idx_delivered_proofs_norm ON delivered_proofs(normalizedAddress);
+        CREATE INDEX IF NOT EXISTS idx_delivered_proofs_date ON delivered_proofs(deliveredAt);
       `);
     } catch {
       // ignore
@@ -872,4 +910,326 @@ export class DatabaseService {
       // ignore
     }
   }
+
+  /* ═══════════════════════════════════════════════════
+     DIVISÃO / SHARDING AUTOMÁTICO DE BANCOS SQLITE (1 GB)
+  ═══════════════════════════════════════════════════ */
+
+  /**
+   * Calcula o tamanho em bytes do banco SQLite via PRAGMA page_count * PRAGMA page_size.
+   */
+  static getDatabaseSizeBytes(targetDb?: DB): number {
+    const database = targetDb || this.db;
+    if (!database) return 0;
+    try {
+      const pageCountRes = database.executeSync('PRAGMA page_count;');
+      const pageSizeRes = database.executeSync('PRAGMA page_size;');
+      const pageCount = (pageCountRes.rows?.[0] as any)?.page_count ?? (pageCountRes.rows?.[0] as any)?.['page_count'] ?? 0;
+      const pageSize = (pageSizeRes.rows?.[0] as any)?.page_size ?? (pageSizeRes.rows?.[0] as any)?.['page_size'] ?? 4096;
+      return Number(pageCount) * Number(pageSize);
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Verifica se o banco ativo bateu o limite de 1 GB (1.073.741.824 bytes).
+   * Se ultrapassar, cria automaticamente um novo arquivo SQLite para receber os dados seguintes.
+   */
+  static checkAndRotateIfFull(customThresholdBytes?: number): boolean {
+    if (!this.db) this.init();
+    const threshold = customThresholdBytes ?? this.MAX_DB_SIZE_BYTES;
+    const currentSize = this.getDatabaseSizeBytes(this.db!);
+
+    if (currentSize >= threshold) {
+      this.shardIndex += 1;
+      const nextDbName = `routes_deliveries_offline_${this.shardIndex}.db`;
+      console.log(`[DatabaseService] Banco atingiu limite de ${threshold} bytes (tamanho atual: ${currentSize} bytes). Criando novo shard: ${nextDbName}`);
+
+      this.openedShards.set(this.currentDbName, this.db!);
+      if (!this.allDbShards.includes(nextDbName)) {
+        this.allDbShards.push(nextDbName);
+      }
+      this.currentDbName = nextDbName;
+
+      const newDb = open({ name: nextDbName });
+      this.initSchema(newDb);
+      this.db = newDb;
+      this.openedShards.set(nextDbName, newDb);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Retorna os nomes de todos os shards de banco de dados SQLite criados.
+   */
+  static getAllShardNames(): string[] {
+    return [...this.allDbShards];
+  }
+
+  /**
+   * Retorna instâncias ativas de todos os bancos SQLite (ativo + shards históricos).
+   */
+  static getAllShards(): DB[] {
+    if (!this.db) this.init();
+    const list: DB[] = [];
+    for (const name of this.allDbShards) {
+      if (name === this.currentDbName && this.db) {
+        list.push(this.db);
+      } else if (this.openedShards.has(name)) {
+        list.push(this.openedShards.get(name)!);
+      } else {
+        try {
+          const shard = open({ name });
+          this.initSchema(shard);
+          this.openedShards.set(name, shard);
+          list.push(shard);
+        } catch (e) {
+          console.warn(`[DatabaseService] Erro ao abrir shard ${name}:`, e);
+        }
+      }
+    }
+    return list;
+  }
+
+  /* ═══════════════════════════════════════════════════
+     COMPROVANTES DE ENTREGA (FOTOS + DADOS DA PLANILHA)
+  ═══════════════════════════════════════════════════ */
+
+  /**
+   * Salva o comprovante de entrega com foto e todos os dados originais da planilha no SQLite.
+   */
+  static saveDeliveredProof(proof: Omit<DeliveredProofEntity, 'id'>): number {
+    this.checkAndRotateIfFull();
+    const db = this.getDb();
+    const now = Date.now();
+    const norm = getCanonicalAddressKey({ address: proof.address, bairro: proof.bairro ?? undefined, city: proof.city ?? undefined }) || proof.normalizedAddress;
+
+    const res = db.executeSync(
+      `INSERT INTO delivered_proofs (
+        deliveryId, listId, recipientName, address, normalizedAddress,
+        bairro, city, zipCode, latitude, longitude, orderCode,
+        phone, receiverPerson, photoUri, photoBase64, rgDocument,
+        notes, originalData, deliveredAt, createdAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        proof.deliveryId ?? null,
+        proof.listId ?? null,
+        proof.recipientName,
+        proof.address,
+        norm,
+        proof.bairro ?? null,
+        proof.city ?? null,
+        proof.zipCode ?? null,
+        proof.latitude ?? null,
+        proof.longitude ?? null,
+        proof.orderCode ?? null,
+        proof.phone ?? null,
+        proof.receiverPerson ?? null,
+        proof.photoUri ?? null,
+        proof.photoBase64 ?? null,
+        proof.rgDocument ?? null,
+        proof.notes ?? null,
+        proof.originalData ?? null,
+        proof.deliveredAt || now,
+        proof.createdAt || now,
+      ],
+    );
+
+    // Checa novamente após inserção para rotacionar se necessário
+    this.checkAndRotateIfFull();
+
+    return res.insertId ?? now;
+  }
+
+  /**
+   * Busca entregas anteriores feitas neste mesmo endereço ou coordenadas (busca unificada em todos os shards).
+   */
+  static findPreviousDeliveriesAtAddress(
+    address: string,
+    lat?: number | null,
+    lng?: number | null,
+  ): DeliveredProofEntity[] {
+    const shards = this.getAllShards();
+    const norm = getCanonicalAddressKey({ address });
+    const results: DeliveredProofEntity[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const shard of shards) {
+      try {
+        let rows: any[] = [];
+        if (norm) {
+          const res = shard.executeSync(
+            `SELECT * FROM delivered_proofs WHERE normalizedAddress = ? ORDER BY deliveredAt DESC;`,
+            [norm],
+          );
+          if (res.rows) {
+            rows = [...(res.rows as any[])];
+          }
+        }
+
+        // Se tiver coordenadas, busca também por proximidade geográfica (~35 metros)
+        if (lat && lng && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+          const coordRes = shard.executeSync(
+            `SELECT * FROM delivered_proofs 
+             WHERE latitude IS NOT NULL AND longitude IS NOT NULL 
+             AND ABS(latitude - ?) < 0.00035 
+             AND ABS(longitude - ?) < 0.00035
+             ORDER BY deliveredAt DESC;`,
+            [lat, lng],
+          );
+          if (coordRes.rows) {
+            for (const r of coordRes.rows as any[]) {
+              if (!rows.some((existing) => existing.id === r.id)) {
+                rows.push(r);
+              }
+            }
+          }
+        }
+
+        for (const r of rows) {
+          const key = `${r.id}_${r.deliveredAt}`;
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            results.push(this.mapRowToDeliveredProof(r));
+          }
+        }
+      } catch (e) {
+        console.warn('[DatabaseService] Erro ao buscar entregas anteriores no shard:', e);
+      }
+    }
+
+    return results.sort((a, b) => b.deliveredAt - a.deliveredAt);
+  }
+
+  /**
+   * Retorna a entrega anterior mais recente para este endereço/coordenada.
+   */
+  static findLatestDeliveredProof(
+    address: string,
+    lat?: number | null,
+    lng?: number | null,
+  ): DeliveredProofEntity | null {
+    const list = this.findPreviousDeliveriesAtAddress(address, lat, lng);
+    return list.length > 0 ? list[0] : null;
+  }
+
+  /**
+   * Pesquisa nas entregas concluídas com suporte a barra de pesquisa (filtra em todos os shards).
+   */
+  static searchDeliveredHistory(query: string = ''): DeliveredProofEntity[] {
+    const shards = this.getAllShards();
+    const cleanQuery = query.trim().toLowerCase();
+    const results: DeliveredProofEntity[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const shard of shards) {
+      try {
+        let res;
+        if (!cleanQuery) {
+          res = shard.executeSync(
+            `SELECT * FROM delivered_proofs ORDER BY deliveredAt DESC;`,
+          );
+        } else {
+          const param = `%${cleanQuery}%`;
+          res = shard.executeSync(
+            `SELECT * FROM delivered_proofs 
+             WHERE recipientName LIKE ? 
+                OR address LIKE ? 
+                OR orderCode LIKE ? 
+                OR phone LIKE ? 
+                OR rgDocument LIKE ? 
+                OR notes LIKE ? 
+                OR receiverPerson LIKE ?
+             ORDER BY deliveredAt DESC;`,
+            [param, param, param, param, param, param, param],
+          );
+        }
+
+        if (res.rows) {
+          for (const r of res.rows as any[]) {
+            const key = `${r.id}_${r.deliveredAt}`;
+            if (!seenKeys.has(key)) {
+              seenKeys.add(key);
+              results.push(this.mapRowToDeliveredProof(r));
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[DatabaseService] Erro em searchDeliveredHistory:', e);
+      }
+    }
+
+    return results.sort((a, b) => b.deliveredAt - a.deliveredAt);
+  }
+
+  /**
+   * Exclui um comprovante específico por ID.
+   */
+  static deleteDeliveredProof(id: number): void {
+    const shards = this.getAllShards();
+    for (const shard of shards) {
+      try {
+        shard.executeSync(`DELETE FROM delivered_proofs WHERE id = ?;`, [id]);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /**
+   * Limpa todos os comprovantes de entrega.
+   */
+  static clearDeliveredProofs(): void {
+    const shards = this.getAllShards();
+    for (const shard of shards) {
+      try {
+        shard.executeSync(`DELETE FROM delivered_proofs;`);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /**
+   * Recoloca uma entrega de volta na rota ativa (reverte status para 'pending' e limpa motivo de falha).
+   */
+  static revertDeliveryStatus(id: number): void {
+    this.updateDeliveryStatus(id, 'pending', { failReason: null });
+  }
+
+  /**
+   * Recoloca múltiplas entregas (ex: parada inteira) de volta na rota ativa.
+   */
+  static revertDeliveriesForStop(deliveryIds: number[]): void {
+    deliveryIds.forEach((id) => this.revertDeliveryStatus(id));
+  }
+
+  private static mapRowToDeliveredProof(r: any): DeliveredProofEntity {
+    return {
+      id: Number(r.id),
+      deliveryId: r.deliveryId != null ? Number(r.deliveryId) : null,
+      listId: r.listId != null ? Number(r.listId) : null,
+      recipientName: r.recipientName || '',
+      address: r.address || '',
+      normalizedAddress: r.normalizedAddress || '',
+      bairro: r.bairro ?? null,
+      city: r.city ?? null,
+      zipCode: r.zipCode ?? null,
+      latitude: r.latitude != null ? Number(r.latitude) : null,
+      longitude: r.longitude != null ? Number(r.longitude) : null,
+      orderCode: r.orderCode ?? null,
+      phone: r.phone ?? null,
+      receiverPerson: r.receiverPerson ?? null,
+      photoUri: r.photoUri ?? null,
+      photoBase64: r.photoBase64 ?? null,
+      rgDocument: r.rgDocument ?? null,
+      notes: r.notes ?? null,
+      originalData: r.originalData ?? null,
+      deliveredAt: Number(r.deliveredAt || 0),
+      createdAt: Number(r.createdAt || 0),
+    };
+  }
 }
+

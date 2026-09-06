@@ -11,6 +11,7 @@ import {
 } from '@maplibre/maplibre-react-native';
 import { CustomMarkerPin } from '../../../components/Map/CustomMarkerPin';
 import { NavigationArrowMarker } from '../../../components/Map/NavigationArrowMarker';
+import { DatabaseService } from '../../../storage/DatabaseService';
 import type {
   GeoJSONFeatureCollection,
   LngLat,
@@ -93,10 +94,15 @@ export function MapLibreView({
           const isLassoSelected = lassoSelectedStopKeys.has(stop.key);
           const coords: LngLat = [stop.longitude, stop.latitude];
 
+          let hasProof = false;
+          try {
+            hasProof = !!DatabaseService.findLatestDeliveredProof(stop.address, stop.latitude, stop.longitude);
+          } catch {}
+
           return (
             <Marker
-              key={`stop-${stop.key}`}
-              id={`stop-${stop.key}`}
+              key={stop.key}
+              id={`marker-${stop.key}`}
               lngLat={coords}
               anchor="bottom"
               onPress={() => selectStop(stop)}
@@ -109,6 +115,7 @@ export function MapLibreView({
                 isCompleted={isDone}
                 isFailed={isFailed}
                 isLassoSelected={isLassoSelected}
+                hasPreviousDelivery={hasProof}
                 count={stop.totalCount}
               />
             </Marker>
