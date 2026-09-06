@@ -1179,6 +1179,65 @@ export class DatabaseService {
   }
 
   /**
+   * Atualiza a foto de um comprovante existente (substituindo pelo novo photoUri e photoBase64) em todos os shards.
+   */
+  static updateDeliveredProofPhoto(
+    id: number,
+    newPhotoUri: string | null,
+    newPhotoBase64: string | null = null,
+  ): void {
+    const shards = this.getAllShards();
+    for (const shard of shards) {
+      try {
+        shard.executeSync(
+          `UPDATE delivered_proofs SET photoUri = ?, photoBase64 = ? WHERE id = ?;`,
+          [newPhotoUri, newPhotoBase64, id],
+        );
+      } catch (e) {
+        console.warn('[DatabaseService] Erro ao atualizar foto do comprovante por ID:', e);
+      }
+    }
+  }
+
+  /**
+   * Atualiza a foto de todos os comprovantes anteriores deste endereço ou coordenadas,
+   * garantindo que o histórico da residência fique sincronizado com a foto mais recente.
+   */
+  static updatePhotoForAddress(
+    address: string,
+    newPhotoUri: string | null,
+    newPhotoBase64: string | null = null,
+    lat?: number | null,
+    lng?: number | null,
+  ): void {
+    const shards = this.getAllShards();
+    const norm = getCanonicalAddressKey({ address });
+
+    for (const shard of shards) {
+      try {
+        if (norm) {
+          shard.executeSync(
+            `UPDATE delivered_proofs SET photoUri = ?, photoBase64 = ? WHERE normalizedAddress = ?;`,
+            [newPhotoUri, newPhotoBase64, norm],
+          );
+        }
+
+        if (lat && lng && !isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+          shard.executeSync(
+            `UPDATE delivered_proofs SET photoUri = ?, photoBase64 = ? 
+             WHERE latitude IS NOT NULL AND longitude IS NOT NULL 
+             AND ABS(latitude - ?) < 0.00035 
+             AND ABS(longitude - ?) < 0.00035;`,
+            [newPhotoUri, newPhotoBase64, lat, lng],
+          );
+        }
+      } catch (e) {
+        console.warn('[DatabaseService] Erro ao atualizar foto do comprovante por endereço:', e);
+      }
+    }
+  }
+
+  /**
    * Limpa todos os comprovantes de entrega.
    */
   static clearDeliveredProofs(): void {

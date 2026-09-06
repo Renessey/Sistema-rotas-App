@@ -19,7 +19,7 @@ import {
   MapTheme,
 } from '../../config/mapStyles';
 import type { Costing } from '../../types/geo';
-import { X, Car, Truck, Bike } from 'lucide-react-native';
+import { X, Car, Truck, Bike, Moon } from 'lucide-react-native';
 
 export interface MapDisplayModalProps {
   visible: boolean;
@@ -172,6 +172,39 @@ export function MapDisplayModal({
             {/* 2. Tema Visual do Mapa */}
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>TEMA & ESTILO VISUAL</Text>
+
+              {/* Destaque: Modo Dark / Tema Escuro no Mapa */}
+              <View style={styles.darkToggleCard}>
+                <View style={styles.darkToggleLeft}>
+                  <View
+                    style={[
+                      styles.darkIconCircle,
+                      selectedTheme === 'dark' && styles.darkIconCircleActive,
+                    ]}
+                  >
+                    <Moon
+                      size={18}
+                      color={selectedTheme === 'dark' ? '#FBBF24' : colors.textSecondary}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.darkToggleTitle}>Modo Dark / Tema Escuro no Mapa</Text>
+                    <Text style={styles.darkToggleSub}>
+                      Mapa vetorial noturno com alto contraste viário
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={selectedTheme === 'dark'}
+                  onValueChange={(val) => onSelectTheme(val ? 'dark' : 'classic')}
+                  trackColor={{
+                    false: colors.borderStrong,
+                    true: colors.primary,
+                  }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
               <View style={styles.themeList}>
                 {MAP_THEMES.map((theme) => {
                   const isSelected = selectedTheme === theme.id;
@@ -541,5 +574,47 @@ const createStyles = (colors: any) =>
     filterSub: {
       ...typography.caption,
       color: colors.textMuted,
+    },
+    darkToggleCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: colors.surfaceElevated,
+      borderRadius: radius.md,
+      padding: spacing.md,
+      borderWidth: 1.5,
+      borderColor: colors.border,
+      gap: spacing.md,
+      marginBottom: spacing.xs,
+    },
+    darkToggleLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      flex: 1,
+    },
+    darkIconCircle: {
+      width: 38,
+      height: 38,
+      borderRadius: radius.md,
+      backgroundColor: colors.surface,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    darkIconCircleActive: {
+      backgroundColor: 'rgba(251, 191, 36, 0.15)',
+      borderColor: '#FBBF24',
+    },
+    darkToggleTitle: {
+      ...typography.bodyMedium,
+      fontWeight: '700',
+      color: colors.text,
+    },
+    darkToggleSub: {
+      ...typography.caption,
+      color: colors.textMuted,
+      fontSize: 11,
     },
   });

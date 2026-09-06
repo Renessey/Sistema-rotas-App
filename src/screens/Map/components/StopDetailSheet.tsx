@@ -6,6 +6,7 @@ import {
   ScrollView,
   ActivityIndicator,
   StyleSheet,
+  Alert,
 } from 'react-native';
 import {
   X,
@@ -18,6 +19,7 @@ import {
   Camera,
   CheckCircle2,
   Eye,
+  RefreshCw,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { NavigationLauncher } from '../../../services/navigation/NavigationLauncher';
@@ -79,7 +81,111 @@ export function StopDetailSheet({
     }
   }, [activeStop]);
 
+  /**
+   * Atualiza a foto anterior no banco SQLite e exclui o arquivo da foto antiga do disco.
+   */
+  const handleUpdatePreviousProofPhoto = async (
+    proof: DeliveredProofEntity,
+    newPhoto: { uri: string; base64?: string },
+  ) => {
+    try {
+      // 1. Remove arquivo antigo do armazenamento se houver
+      if (proof.photoUri && proof.photoUri !== newPhoto.uri) {
+        await CameraService.deletePhoto(proof.photoUri);
+      }
+      // 2. Atualiza no banco SQLite por ID
+      DatabaseService.updateDeliveredProofPhoto(proof.id, newPhoto.uri, newPhoto.base64 ?? null);
+      // 3. Atualiza no banco por endereço para sincronizar todo histórico daquele local
+      DatabaseService.updatePhotoForAddress(
+        activeStop.address,
+        newPhoto.uri,
+        newPhoto.base64 ?? null,
+        activeStop.latitude,
+        activeStop.longitude,
+      );
+      // 4. Atualiza estado local para refletir na interface
+      setPreviousProof((prev) =>
+        prev
+          ? {
+              ...prev,
+              photoUri: newPhoto.uri,
+              photoBase64: newPhoto.base64 ?? null,
+            }
+          : null,
+      );
+    } catch (e) {
+      console.warn('[StopDetailSheet] Erro ao substituir foto anterior:', e);
+    }
+  };
+
   const handleCompletePress = async () => {
+    const hasPreviousPhoto = Boolean(
+      previousProof && (previousProof.photoUri || previousProof.photoBase64),
+    );
+
+    // Se já foi entregue anteriormente e possui foto, pergunta se quer atualizar a foto
+    if (hasPreviousPhoto && previousProof) {
+      Alert.alert(
+        'Foto Anterior Encontrada',
+        'Este local já possui uma foto registrada de uma entrega anterior. Deseja atualizar tirando uma nova foto ou manter a foto existente?',
+        [
+          {
+            text: 'Manter Foto Anterior',
+            onPress: () => {
+              const existingPhoto = {
+                uri: previousProof.photoUri || '',
+                base64: previousProof.photoBase64 || undefined,
+              };
+              onComplete(activeStop, selectedReceiver || undefined, existingPhoto);
+            },
+          },
+          {
+            text: 'Atualizar Foto',
+            onPress: async () => {
+              try {
+                setIsCapturingPhoto(true);
+                const newPhoto = await CameraService.captureDeliveryPhoto();
+                setIsCapturingPhoto(false);
+                if (newPhoto) {
+                  // Atualiza a foto anterior pela nova e remove a antiga do banco e do disco
+                  await handleUpdatePreviousProofPhoto(previousProof, newPhoto);
+                  onComplete(activeStop, selectedReceiver || undefined, newPhoto);
+                } else {
+                  // Se o usuário cancelou a câmera
+                  Alert.alert(
+                    'Foto não capturada',
+                    'Deseja concluir a entrega mantendo a foto anterior?',
+                    [
+                      { text: 'Cancelar', style: 'cancel' },
+                      {
+                        text: 'Sim, Manter Anterior',
+                        onPress: () => {
+                          const existingPhoto = {
+                            uri: previousProof.photoUri || '',
+                            base64: previousProof.photoBase64 || undefined,
+                          };
+                          onComplete(activeStop, selectedReceiver || undefined, existingPhoto);
+                        },
+                      },
+                    ],
+                  );
+                }
+              } catch (err) {
+                console.warn('[StopDetailSheet] Erro ao atualizar foto:', err);
+                setIsCapturingPhoto(false);
+                onComplete(activeStop, selectedReceiver || undefined);
+              }
+            },
+          },
+          {
+            text: 'Cancelar',
+            style: 'cancel',
+          },
+        ],
+      );
+      return;
+    }
+
     try {
       setIsCapturingPhoto(true);
       // Abre a câmera para tirar foto do local/residência/pacote
@@ -120,7 +226,7 @@ export function StopDetailSheet({
           </Text>
         ) : null}
 
-        {/* ── Banner: Encomenda já entregue nesse local com botão "Ver" ── */}
+        {/* ── Banner: Encomenda já entregue nesse local com botão "Ver" e "Atualizar" ── */}
         {previousProof && (
           <View
             style={{
@@ -151,21 +257,45 @@ export function StopDetailSheet({
               </View>
             </View>
 
-            <Pressable
-              style={{
-                backgroundColor: '#10B981',
-                paddingHorizontal: 12,
-                paddingVertical: 6,
-                borderRadius: 8,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-              }}
-              onPress={() => setShowProofModal(true)}
-            >
-              <Eye size={13} color="#FFFFFF" />
-              <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>Ver</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Pressable
+                style={{
+                  backgroundColor: '#10B981',
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+                onPress={() => setShowProofModal(true)}
+              >
+                <Eye size={13} color="#FFFFFF" />
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>Ver</Text>
+              </Pressable>
+
+              <Pressable
+                style={{
+                  backgroundColor: '#059669',
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+                onPress={async () => {
+                  const newPhoto = await CameraService.captureDeliveryPhoto();
+                  if (newPhoto) {
+                    await handleUpdatePreviousProofPhoto(previousProof, newPhoto);
+                    Alert.alert('Sucesso', 'Foto do local atualizada no banco com sucesso!');
+                  }
+                }}
+              >
+                <Camera size={13} color="#FFFFFF" />
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#FFFFFF' }}>Atualizar</Text>
+              </Pressable>
+            </View>
           </View>
         )}
 
@@ -474,6 +604,17 @@ export function StopDetailSheet({
         visible={showProofModal}
         proof={previousProof}
         onClose={() => setShowProofModal(false)}
+        onUpdatePhoto={(newPhoto) => {
+          setPreviousProof((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  photoUri: newPhoto.uri,
+                  photoBase64: newPhoto.base64 ?? null,
+                }
+              : null,
+          );
+        }}
       />
     </View>
   );

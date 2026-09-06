@@ -30,6 +30,7 @@ import {
   RefreshCw,
   Trash2,
   PackageCheck,
+  Moon,
 } from 'lucide-react-native';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
@@ -171,7 +172,23 @@ export default function SettingsScreen({ navigation }: Props) {
             ))}
           </View>
 
-          <Text style={[styles.subHeader, { marginTop: spacing.md }]}>Tema Visual do Mapa</Text>
+          <View style={[styles.rowBetween, { marginTop: spacing.md, paddingTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border }]}>
+            <View style={styles.rowLeft}>
+              <Moon size={16} color={mapTheme === 'dark' ? '#FBBF24' : colors.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.rowTitle}>Modo Dark no Mapa</Text>
+                <Text style={styles.rowSub}>Ativa o tema escuro de alto contraste no mapa</Text>
+              </View>
+            </View>
+            <Switch
+              value={mapTheme === 'dark'}
+              onValueChange={(val) => handleUpdateTheme(val ? 'dark' : 'classic')}
+              trackColor={{ false: colors.borderStrong, true: colors.primary }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          <Text style={[styles.subHeader, { marginTop: spacing.sm }]}>Tema Visual do Mapa</Text>
           <View style={styles.themeGrid}>
             {MAP_THEMES.map((th) => (
               <Pressable

@@ -3,37 +3,42 @@ import {
   View,
   Text,
   Modal,
-  Pressable,
   Image,
+  Pressable,
   ScrollView,
   StyleSheet,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   X,
-  Camera,
   MapPin,
-  Calendar,
   User,
+  Calendar,
+  Camera,
   Package,
   FileText,
   ChevronDown,
   ChevronUp,
+  RefreshCw,
 } from 'lucide-react-native';
 import { radius, shadows, spacing, typography } from '../../../theme';
 import { useTheme } from '../../../theme/ThemeContext';
+import { CameraService } from '../../../services/camera/CameraService';
+import { DatabaseService } from '../../../storage/DatabaseService';
 import type { DeliveredProofEntity } from '../../../types/geo';
 
 interface DeliveryProofModalProps {
   visible: boolean;
   proof: DeliveredProofEntity | null;
   onClose: () => void;
+  onUpdatePhoto?: (newPhoto: { uri: string; base64?: string }) => void;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
-export function DeliveryProofModal({ visible, proof, onClose }: DeliveryProofModalProps) {
+export function DeliveryProofModal({ visible, proof, onClose, onUpdatePhoto }: DeliveryProofModalProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
   const [showOriginalData, setShowOriginalData] = useState(false);
@@ -108,6 +113,43 @@ export function DeliveryProofModal({ visible, proof, onClose }: DeliveryProofMod
                 <View style={styles.photoBadge}>
                   <Text style={styles.photoBadgeText}>FOTO DO LOCAL / FACHADA</Text>
                 </View>
+                <Pressable
+                  style={{
+                    position: 'absolute',
+                    top: 10,
+                    right: 10,
+                    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                    borderWidth: 1,
+                    borderColor: 'rgba(255, 255, 255, 0.3)',
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                  onPress={async () => {
+                    const photo = await CameraService.captureDeliveryPhoto();
+                    if (photo && proof) {
+                      if (proof.photoUri && proof.photoUri !== photo.uri) {
+                        await CameraService.deletePhoto(proof.photoUri);
+                      }
+                      DatabaseService.updateDeliveredProofPhoto(proof.id, photo.uri, photo.base64 ?? null);
+                      DatabaseService.updatePhotoForAddress(
+                        proof.address,
+                        photo.uri,
+                        photo.base64 ?? null,
+                        proof.latitude,
+                        proof.longitude,
+                      );
+                      onUpdatePhoto?.(photo);
+                      Alert.alert('Sucesso', 'Foto atualizada e anterior removida com sucesso!');
+                    }
+                  }}
+                >
+                  <Camera size={13} color="#FFFFFF" />
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#FFFFFF' }}>Atualizar Foto</Text>
+                </Pressable>
               </View>
             ) : (
               <View style={[styles.noPhotoContainer, { backgroundColor: colors.surfaceElevated }]}>
@@ -115,6 +157,36 @@ export function DeliveryProofModal({ visible, proof, onClose }: DeliveryProofMod
                 <Text style={[styles.noPhotoText, { color: colors.textMuted }]}>
                   Nenhuma foto registrada para este comprovante
                 </Text>
+                <Pressable
+                  style={{
+                    marginTop: 8,
+                    backgroundColor: colors.primary,
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 8,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                  onPress={async () => {
+                    const photo = await CameraService.captureDeliveryPhoto();
+                    if (photo && proof) {
+                      DatabaseService.updateDeliveredProofPhoto(proof.id, photo.uri, photo.base64 ?? null);
+                      DatabaseService.updatePhotoForAddress(
+                        proof.address,
+                        photo.uri,
+                        photo.base64 ?? null,
+                        proof.latitude,
+                        proof.longitude,
+                      );
+                      onUpdatePhoto?.(photo);
+                      Alert.alert('Sucesso', 'Foto registrada com sucesso!');
+                    }
+                  }}
+                >
+                  <Camera size={14} color="#FFFFFF" />
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>Adicionar Foto</Text>
+                </Pressable>
               </View>
             )}
 

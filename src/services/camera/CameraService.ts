@@ -129,4 +129,21 @@ export class CameraService {
       });
     });
   }
+
+  /**
+   * Remove com segurança o arquivo da foto do armazenamento local do aparelho.
+   */
+  static async deletePhoto(photoUri?: string | null): Promise<void> {
+    if (!photoUri) return;
+    try {
+      const cleanPath = photoUri.replace('file://', '');
+      const exists = await RNFS.exists(cleanPath);
+      if (exists) {
+        await RNFS.unlink(cleanPath);
+      }
+    } catch (err) {
+      console.warn('[CameraService] Erro ao remover foto antiga:', err);
+    }
+  }
 }
+

@@ -52,9 +52,9 @@ export const MAP_THEMES: { id: MapTheme; label: string; icon: string; descriptio
   },
   {
     id: 'dark',
-    label: 'Noturno / Dark',
+    label: 'Modo Dark / Tema Escuro',
     icon: '🌙',
-    description: 'Modo noturno de alto contraste',
+    description: 'Modo noturno escuro com alto contraste viário',
   },
 ];
 
@@ -99,6 +99,7 @@ export function getMapStyleUrl(mapType: MapType = 'standard', mapTheme: MapTheme
 
   switch (mapTheme) {
     case 'dark':
+      return 'https://tiles.openfreemap.org/styles/dark';
     case 'minimal':
       return 'https://tiles.openfreemap.org/styles/positron';
     case 'apple':
