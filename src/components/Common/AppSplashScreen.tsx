@@ -5,10 +5,7 @@ import {
   Image,
   StyleSheet,
   Animated,
-  Dimensions,
 } from 'react-native';
-
-const { width } = Dimensions.get('window');
 
 interface AppSplashScreenProps {
   onFinish: () => void;
@@ -59,8 +56,7 @@ export function AppSplashScreen({ onFinish }: AppSplashScreenProps) {
       ]}
       pointerEvents="none"
     >
-      {/* Círculos decorativos de fundo */}
-      <View style={styles.glowCircle} />
+      {/* Conteúdo central */}
 
       <Animated.View
         style={[
@@ -75,11 +71,10 @@ export function AppSplashScreen({ onFinish }: AppSplashScreenProps) {
           <Image
             source={require('../../assets/logo.png')}
             style={styles.logoImage}
-            resizeMode="cover"
+            resizeMode="contain"
           />
         </View>
 
-        <Text style={styles.brandTitle}>Rotimize</Text>
         <Text style={styles.brandSubtitle}>Roteamento & Entregas Inteligentes</Text>
       </Animated.View>
 
@@ -99,48 +94,26 @@ const styles = StyleSheet.create({
     zIndex: 99999,
     elevation: 99999,
   },
-  glowCircle: {
-    position: 'absolute',
-    width: width * 1.2,
-    height: width * 1.2,
-    borderRadius: (width * 1.2) / 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-  },
   content: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   logoWrapper: {
-    width: 140,
-    height: 140,
-    borderRadius: 32,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.35,
-    shadowRadius: 20,
-    elevation: 16,
-    marginBottom: 20,
-    backgroundColor: '#1800AD',
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.15)',
+    width: 200,
+    height: 200,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   logoImage: {
     width: '100%',
     height: '100%',
   },
-  brandTitle: {
-    fontSize: 32,
-    fontWeight: '900',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
-  },
   brandSubtitle: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: 'rgba(255, 255, 255, 0.75)',
-    marginTop: 6,
-    letterSpacing: 0.2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255, 255, 255, 0.85)',
+    letterSpacing: 0.5,
   },
   footer: {
     position: 'absolute',
